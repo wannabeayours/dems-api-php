@@ -1,0 +1,73 @@
+ Goals for Admin Functions (Focus on Booking and Login and Overseeing)
+ Put "X" right after table names to know if they're created in PHP File
+ If you see a "???" next to it, it means its not complete yet
+
+
+Tables for Admin to manipulate
+   1. tbl_checkin_checkout 
+   2. tbl_guests 
+   3. tbl_payments
+   4. tbl_price
+   5. tbl_reservation_online
+   6. tbl_rooms
+   7. tbl_room_beds
+   8. tbl_room_capacity
+   9. tbl_sizes
+   10. tbl_staff
+   11. tbl_timeanddate
+   12. tbl_visitorlogs
+   13. tbl_reservation_status
+
+   New*
+   1. tbl_checkin_checkout 
+   2. tbl_customers
+   3. tbl_descrition
+   4. tbl_facilities
+   5. tbl_payments
+   6. tbl_reservation_online
+   7. tbl_reservation_status
+   8. tbl_rooms
+   9. tbl_roomtype
+   10. tbl_room_beds
+   11. tbl_room_capacity
+   12. tbl_sizes
+   13. tbl_staff
+   14. tbl_timeanddate
+   15. tbl_user_level
+   16. tbl_visitorslog
+
+
+   Tables that needs to have CRUD
+
+   Admin(Not Yet Updated): 
+   Create: 4, 6, 7, 8, 9, 10
+
+   Read: All
+
+   Update: 4, 6, 7, 8, 9, 10
+
+   Delete: 2, 4, 6, 7, 8, 9, 10
+
+
+   Front Desk:
+   Create: 1, 5, 6, 7, 8, 14, 16
+
+   Read: 1, 2, 4, 5, 6, 7, 8, 14, 16
+
+   Update: 5, 6, 7, 8, 14
+
+
+   Website:
+   Create: 2, 6
+
+   Read: 1, 2, 5, 6, 8
+
+   Update: 2
+
+
+
+
+
+   *Importannt*
+
+   App Password - cjgo mhdw axdc hlox
