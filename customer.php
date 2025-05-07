@@ -481,6 +481,17 @@ class Demiren_customer
 
         return $rowCount > 0 ? json_encode($result) : 0;
     }
+
+    function getFeedbacks()
+    {
+        include "connection.php";
+        $sql = "SELECT CONCAT(b.customers_fname,' ',b.customers_lname) as customer_fullname,a.* FROM `tbl_customersreviews` a
+                INNER JOIN tbl_customers b ON b.customers_id = a.customers_id";
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
+
+    }
 } //customer
 
 
@@ -530,6 +541,9 @@ switch ($operation) {
         break;
     case "getRooms":
         echo $demiren_customer->getRooms();
+        break;
+    case "getFeedbacks":
+        echo json_encode($demiren_customer->getFeedbacks());
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
