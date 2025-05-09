@@ -579,6 +579,7 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
 
         $sql = "SELECT 
+                c.booking_id,
                 a.roomtype_name,
                 e.roomnumber_id,
                 c.booking_downpayment,
@@ -600,9 +601,7 @@ class Demiren_customer
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
         $stmt->execute();
-        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        return json_encode($result);
+        return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
     }
 
     function getCurrentBillings($json)
@@ -699,7 +698,7 @@ switch ($operation) {
         echo $demiren_customer->customerRegistration($json);
         break;
     case "customerCurrentBookings":
-        echo $demiren_customer->customerCurrentBookings($json);
+        echo json_encode($demiren_customer->customerCurrentBookings($json));
         break;
     case "getCurrentBillings":
         echo $demiren_customer->getCurrentBillings($json);
