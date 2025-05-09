@@ -490,7 +490,157 @@ class Demiren_customer
         $stmt = $conn->prepare($sql);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
+    }
+    function customerRegistration($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
 
+        try {
+            $conn->beginTransaction();
+
+
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_customers_online (
+                    customers_online_username, 
+                    customers_online_password, 
+                    customers_online_profile_image,
+                    customers_online_authentication_status
+                ) VALUES (
+                    :customers_online_username, 
+                    :customers_online_password, 
+                    :customers_online_profile_image,
+                    0
+                )
+            ");
+            $stmt->bindParam(':customers_online_username', $json['customers_online_username']);
+            $stmt->bindParam(':customers_online_password', $json['customers_online_password']);
+            $stmt->bindParam(':customers_online_profile_image', $json['customers_online_profile_image']);
+            $stmt->execute();
+            $customers_online_id = $conn->lastInsertId();
+
+
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_customer_identification (
+                    customer_identification_attachment_filename
+                ) VALUES (
+                    :customer_identification_attachment_filename
+                )
+            ");
+            $stmt->bindParam(':customer_identification_attachment_filename', $json['customer_identification_attachment_filename']);
+            $stmt->execute();
+            $identification_id = $conn->lastInsertId();
+
+
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_customers (
+                    nationality_id,
+                    identification_id,
+                    customers_online_id,
+                    customers_fname,
+                    customers_lname,
+                    customers_email,
+                    customers_phone_number,
+                    customers_date_of_birth
+                ) VALUES (
+                    :nationality_id,
+                    :identification_id,
+                    :customers_online_id,
+                    :customers_fname,
+                    :customers_lname,
+                    :customers_email,
+                    :customers_phone_number,
+                    :customers_date_of_birth
+                )
+            ");
+            $stmt->bindParam(':nationality_id', $json['nationality_id']);
+            $stmt->bindParam(':identification_id', $identification_id);
+            $stmt->bindParam(':customers_online_id', $customers_online_id);
+            $stmt->bindParam(':customers_fname', $json['customers_fname']);
+            $stmt->bindParam(':customers_lname', $json['customers_lname']);
+            $stmt->bindParam(':customers_email', $json['customers_email']);
+            $stmt->bindParam(':customers_phone_number', $json['customers_phone_number']);
+            $stmt->bindParam(':customers_date_of_birth', $json['customers_date_of_birth']);
+            $stmt->execute();
+
+            $conn->commit();
+            return 1;
+        } catch (PDOException $e) {
+            $conn->rollBack();
+            return $e->getMessage();
+        }
+    }
+
+    function customerCurrentBookings($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+
+        $bookingCustomerId = $json['booking_customer_id'] ?? 0;
+
+        $sql = "SELECT 
+                a.roomtype_name,
+                e.roomnumber_id,
+                c.booking_downpayment,
+                e.room_beds,
+                e.room_sizes,
+                c.booking_created_at,
+                d.booking_status_name,
+                c.booking_checkin_dateandtime,
+                c.booking_checkout_dateandtime
+            FROM tbl_roomtype AS a
+            INNER JOIN tbl_booking_room AS b ON b.roomtype_id = a.roomtype_id
+            INNER JOIN tbl_booking AS c ON c.booking_id = b.booking_id
+            INNER JOIN tbl_booking_status AS d ON d.booking_status_id = c.booking_status_id
+            INNER JOIN tbl_rooms AS e ON e.roomtype_id = a.roomtype_id
+            WHERE 
+                (c.customers_id = :bookingCustomerId OR c.customers_walk_in_id = :bookingCustomerId)
+                AND c.booking_status_id IN (1, 2)";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
+        $stmt->execute();
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return json_encode($result);
+    }
+
+    function getCurrentBillings($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+
+        try {
+            $stmt = $conn->prepare("
+            SELECT 
+                CONCAT(a.customers_fname, ' ', a.customers_lname) AS customers_fullname,
+                MAX(f.invoice_date) AS invoice_date,
+                CONCAT(g.employee_fname, ' ', g.employee_lname) AS employee_fullname,
+                SUM(CASE WHEN e.charges_category_id = 1 THEN b.booking_charges_price * b.booking_charges_quantity ELSE 0 END) AS room_charges,
+                SUM(CASE WHEN e.charges_category_id = 2 THEN b.booking_charges_price * b.booking_charges_quantity ELSE 0 END) AS food_charges,
+                SUM(CASE WHEN e.charges_category_id = 3 THEN b.booking_charges_price * b.booking_charges_quantity ELSE 0 END) AS extra_charges,
+                SUM(b.booking_charges_price * b.booking_charges_quantity) AS total_charges
+            FROM tbl_customers AS a
+            INNER JOIN tbl_booking AS j ON j.customers_id = a.customers_id
+            INNER JOIN tbl_booking_room AS c ON c.booking_id = j.booking_id
+            INNER JOIN tbl_booking_charges AS b ON b.booking_room_id = c.booking_room_id
+            INNER JOIN tbl_charges_master AS d ON d.charges_master_id = b.charges_master_id
+            INNER JOIN tbl_charges_category AS e ON e.charges_category_id = d.charges_category_id
+            LEFT JOIN tbl_billing AS h ON h.booking_id = j.booking_id
+            LEFT JOIN tbl_invoice AS f ON f.billing_id = h.billing_id
+            LEFT JOIN tbl_employee AS g ON g.employee_id = f.employee_id
+            WHERE b.booking_room_id = :booking_room_id
+              AND j.booking_status_id IN (1, 2)
+        ");
+
+            $stmt->bindParam(":booking_room_id", $json["booking_room_id"]);
+            $stmt->execute();
+
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return json_encode($result);
+        } catch (PDOException $e) {
+            return "Error: " . $e->getMessage();
+        }
     }
 } //customer
 
@@ -545,13 +695,23 @@ switch ($operation) {
     case "getFeedbacks":
         echo json_encode($demiren_customer->getFeedbacks());
         break;
+    case "customerRegistration":
+        echo $demiren_customer->customerRegistration($json);
+        break;
+    case "customerCurrentBookings":
+        echo $demiren_customer->customerCurrentBookings($json);
+        break;
+    case "getCurrentBillings":
+        echo $demiren_customer->getCurrentBillings($json);
+        break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;
 }
 
 
-
+//MUST REMEMBER
 //gwapa ko (naka default nani)({}, []);
 //hende ko na alam 
 //pero maganda ako >< <3
+// wowowowo = feedback
