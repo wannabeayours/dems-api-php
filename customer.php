@@ -701,6 +701,54 @@ class Demiren_customer
             return "Error: " . $e->getMessage();
         }
     }
+
+    function customerBookingWithAccount($json)
+    {
+        // {
+        // "customerId": 1, 
+        // "bookingDetails": {"checkIn": "2023-06-01 02:00:00", "checkOut": "2025-06-02 03:00:00", "downpayment": 1000}, 
+        // "roomDetails": [ {"roomTypeId": 1}, {"roomTypeId": 2} ]
+        // }
+
+        //THANK YOU <333 T-T XOXO xD
+        include "connection.php";
+        $json = json_decode($json, true);
+
+        try {
+            $conn->beginTransaction();
+            $customerId = $json["customerId"];
+            $bookingDetails = $json["bookingDetails"];
+            $roomDetails = $json["roomDetails"];
+
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_booking 
+                    (customers_id, customers_walk_in_id, booking_status_id, booking_downpayment, booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at) 
+                VALUES 
+                    (:customers_id, NULL, 2, :booking_downpayment, :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW())
+            ");
+            $stmt->bindParam(":customers_id", $customerId);
+            $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
+            $stmt->bindParam(":booking_checkin_dateandtime", $bookingDetails["checkIn"]);
+            $stmt->bindParam(":booking_checkout_dateandtime", $bookingDetails["checkOut"]);
+            $stmt->execute();
+            $bookingId = $conn->lastInsertId();
+
+            $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id) VALUES (:booking_id, :roomtype_id, NULL)";
+            foreach ($roomDetails as $room) {
+                $stmt = $conn->prepare($sql);
+                $stmt->bindParam(":booking_id", $bookingId);
+                $stmt->bindParam(":roomtype_id", $room["roomTypeId"]);
+                $stmt->execute();
+            }
+
+
+            $conn->commit();
+            return 1;
+        } catch (PDOException $e) {
+            $conn->rollBack();
+            return $e->getMessage();
+        }
+    }
 } //customer
 
 
@@ -763,12 +811,15 @@ switch ($operation) {
     case "getCurrentBillings":
         echo $demiren_customer->getCurrentBillings($json);
         break;
-        case "customerCurrentBookingsWithAccount":
-            echo $demiren_customer->customerCurrentBookingsWithAccount($json);
-            break;
-        case "customerCurrentBookingsWithoutAccount":
-            echo $demiren_customer->customerCurrentBookingsWithoutAccount($json);
-            break;
+    case "customerCurrentBookingsWithAccount":
+        echo $demiren_customer->customerCurrentBookingsWithAccount($json);
+        break;
+    case "customerCurrentBookingsWithoutAccount":
+        echo $demiren_customer->customerCurrentBookingsWithoutAccount($json);
+        break;
+    case "customerBookingWithAccount": 
+        echo $demiren_customer->customerBookingWithAccount($json);
+        break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;
@@ -779,4 +830,6 @@ switch ($operation) {
 //gwapa ko (naka default nani)({}, []);
 //hende ko na alam 
 //pero maganda ako >< <3
-// wowowowo = feedback
+// wowowowo = feedback name sa github
+//hay nako
+//ang image sa logobells dapat ilisan 
