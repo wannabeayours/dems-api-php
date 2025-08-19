@@ -1,6 +1,6 @@
 <?php
 $host = 'localhost';
-$dbname = 'dems'; //put database name
+$dbname = 'freshdaw'; //put database name
 $user = 'root';
 $pass = '';
 
