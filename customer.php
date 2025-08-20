@@ -639,7 +639,7 @@ class Demiren_customer
         FROM tbl_roomtype b
         LEFT JOIN tbl_imagesroommaster a ON a.roomtype_id = b.roomtype_id
         LEFT JOIN tbl_rooms c ON b.roomtype_id = c.roomtype_id
-        LEFT JOIN tbl_amenity_roomtype d ON b.roomtype_id = d.roomtype_id
+       
         LEFT JOIN tbl_room_amenities_master e ON d.room_amenities_master = e.room_amenities_master_id
         LEFT JOIN tbl_status_types f ON f.status_id = c.room_status_id
         GROUP BY b.roomtype_id, b.roomtype_name, b.roomtype_price
@@ -903,21 +903,64 @@ class Demiren_customer
         $json = json_decode($json, true);
 
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
-
-        $sql = "SELECT a.*, c.booking_status_name, e.roomtype_name, d.roomnumber_id FROM tbl_booking a 
-                INNER JOIN tbl_booking_history b ON b.booking_id = a.booking_id
-                INNER JOIN tbl_booking_status c ON c.booking_status_id = b.status_id
-                INNER JOIN tbl_booking_room d ON d.booking_id = a.booking_id
-                INNER JOIN tbl_roomtype e ON e.roomtype_id = d.roomtype_id
-                WHERE a.customers_id = :bookingCustomerId
-                AND a.booking_isArchive = 0
-                ORDER BY a.booking_created_at DESC";
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
+            FROM tbl_booking a
+            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
+            INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+            INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            WHERE a.customers_id = :bookingCustomerId
+            AND a.booking_isArchive = 0
+            ORDER BY a.booking_created_at DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
         $stmt->execute();
-        return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
+
+        if ($stmt->rowCount() === 0) {
+            return 0;
+        }
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // echo json_encode($rows);
+        // die();
+        // Group by booking_id
+        $grouped = [];
+        foreach ($rows as $row) {
+            $bookingId = $row['booking_id'];
+
+            if (!isset($grouped[$bookingId])) {
+                $grouped[$bookingId] = [
+                    "booking_id" => $row["booking_id"],
+                    "booking_checkin_dateandtime" => $row["booking_checkin_dateandtime"],
+                    "booking_checkout_dateandtime" => $row["booking_checkout_dateandtime"],
+                    "customers_id" => $row["customers_id"],
+                    "booking_date" => $row["booking_created_at"],
+                    "booking_status" => $row["booking_status_name"],
+                    "guests_amnt" => $row["guests_amnt"],
+                    "booking_downpayment" => $row["booking_downpayment"],
+                    "booking_total" => $row["booking_totalAmount"],
+                    "rooms" => []
+                ];
+            }
+
+            $grouped[$bookingId]["rooms"][] = [
+                "booking_room_id" => $row["booking_room_id"],
+                "room_description" => $row["roomtype_description"],
+                "room_id" => $row["roomnumber_id"],
+                "room_number" => $row["roomnumber_id"],
+                "roomtype_id" => $row["roomtype_id"],
+                "roomtype_name" => $row["roomtype_name"],
+                "room_price" => $row["roomtype_price"]
+            ];
+        }
+
+        return array_values($grouped);
     }
+
+
+
 
     function archiveBooking($json)
     {
@@ -936,19 +979,62 @@ class Demiren_customer
     {
         include "connection.php";
         $json = json_decode($json, true);
+
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
-        $sql = "SELECT a.*, c.booking_status_name, e.roomtype_name, d.roomnumber_id FROM tbl_booking a 
-                INNER JOIN tbl_booking_history b ON b.booking_id = a.booking_id
-                INNER JOIN tbl_booking_status c ON c.booking_status_id = b.status_id
-                INNER JOIN tbl_booking_room d ON d.booking_id = a.booking_id
-                INNER JOIN tbl_roomtype e ON e.roomtype_id = d.roomtype_id
-                WHERE a.customers_id = :bookingCustomerId
-                AND a.booking_isArchive = 1
-                ORDER BY a.booking_created_at DESC";
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
+            FROM tbl_booking a
+            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
+            INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+            INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            WHERE a.customers_id = :bookingCustomerId
+            AND a.booking_isArchive = 1
+            ORDER BY a.booking_created_at DESC";
+
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
         $stmt->execute();
-        return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
+
+        if ($stmt->rowCount() === 0) {
+            return 0;
+        }
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // echo json_encode($rows);
+        // die();
+        // Group by booking_id
+        $grouped = [];
+        foreach ($rows as $row) {
+            $bookingId = $row['booking_id'];
+
+            if (!isset($grouped[$bookingId])) {
+                $grouped[$bookingId] = [
+                    "booking_id" => $row["booking_id"],
+                    "booking_checkin_dateandtime" => $row["booking_checkin_dateandtime"],
+                    "booking_checkout_dateandtime" => $row["booking_checkout_dateandtime"],
+                    "customers_id" => $row["customers_id"],
+                    "booking_date" => $row["booking_created_at"],
+                    "booking_status" => $row["booking_status_name"],
+                    "guests_amnt" => $row["guests_amnt"],
+                    "booking_downpayment" => $row["booking_downpayment"],
+                    "booking_total" => $row["booking_totalAmount"],
+                    "rooms" => []
+                ];
+            }
+
+            $grouped[$bookingId]["rooms"][] = [
+                "booking_room_id" => $row["booking_room_id"],
+                "room_description" => $row["roomtype_description"],
+                "room_id" => $row["roomnumber_id"],
+                "room_number" => $row["roomnumber_id"],
+                "roomtype_id" => $row["roomtype_id"],
+                "roomtype_name" => $row["roomtype_name"],
+                "room_price" => $row["roomtype_price"]
+            ];
+        }
+
+        return array_values($grouped);
     }
 
     function unarchiveBooking($json)
