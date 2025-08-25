@@ -633,14 +633,13 @@ class Demiren_customer
         GROUP_CONCAT(DISTINCT  c.room_beds) AS room_beds,
         GROUP_CONCAT(DISTINCT c.room_capacity) AS room_capacity,
         GROUP_CONCAT(DISTINCT c.room_sizes) AS room_sizes,
-        GROUP_CONCAT(DISTINCT e.room_amenities_master_name) AS amenities,
+        -- GROUP_CONCAT(DISTINCT e.room_amenities_master_name) AS amenities,
         f.status_name,
         f.status_id
         FROM tbl_roomtype b
         LEFT JOIN tbl_imagesroommaster a ON a.roomtype_id = b.roomtype_id
         LEFT JOIN tbl_rooms c ON b.roomtype_id = c.roomtype_id
-       
-        LEFT JOIN tbl_room_amenities_master e ON d.room_amenities_master = e.room_amenities_master_id
+        -- LEFT JOIN tbl_room_amenities_master e ON d.room_amenities_master = e.room_amenities_master_id
         LEFT JOIN tbl_status_types f ON f.status_id = c.room_status_id
         GROUP BY b.roomtype_id, b.roomtype_name, b.roomtype_price
         ";
@@ -905,14 +904,14 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
             FROM tbl_booking a
-            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
             INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
             INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
             INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
             INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 0
-            ORDER BY a.booking_created_at DESC";
+            ORDER BY a.booking_id DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
@@ -1097,6 +1096,40 @@ class Demiren_customer
             return $th->getMessage();
         }
     }
+
+    function login($json){
+        // {"username":"sabils","password":"sabils"}
+        include "connection.php";
+        $data = json_decode($json, true);
+        $sql = "SELECT a.customers_online_id, a.customers_online_profile_image, b.*
+        FROM tbl_customers_online a 
+        INNER JOIN tbl_customers b ON b.customers_online_id = a.customers_online_id
+        WHERE a.customers_online_username = :customers_online_username AND BINARY a.customers_online_password = :customers_online_password";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":customers_online_username", $data["username"]);
+        $stmt->bindParam(":customers_online_password", $data["password"]);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
+        
+        // $customer = $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
+        // if($customer == 0){
+        //     return $this->employeeLogin($json);
+        // }else{
+        //     return $customer;
+        // }
+    }
+
+    function employeeLogin($json){
+        include "connection.php";
+        $data = json_decode($json, true);
+        $sql = " SELECT * FROM tbl_employee WHERE employee_username = :employee_username AND BINARY employee_password = :employee_password";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":employee_username", $data["username"]);
+        $stmt->bindParam(":employee_password", $data["password"]);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
+    }
+
 } //customer
 
 
@@ -1186,6 +1219,9 @@ switch ($operation) {
     case "removeBookingRoom":
         echo json_encode($demiren_customer->removeBookingRoom($json));
         break;
+    case "login":
+        echo json_encode($demiren_customer->login($json));
+        break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;
@@ -1200,3 +1236,4 @@ switch ($operation) {
 //hay nako
 //ang image sa logobells dapat ilisan 
 //WALA KOY MOUSE :((
+//2029??!!!! the helly
