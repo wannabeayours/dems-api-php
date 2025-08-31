@@ -1130,7 +1130,114 @@ class Demiren_customer
         return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
     }
 
+    function getBookingSummary($json)
+    {
+        // {"booking_customer_id":1}
+        include "connection.php";
+        $json = json_decode($json, true);
+        $bookingCustomerId = $json['booking_customer_id'] ?? 0;
+        $today = date("Y-m-d");
+
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.*, g.*
+                FROM tbl_booking a
+                INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+                INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+                INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+                INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+                LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
+                LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+                WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+                AND e.status_id = 2
+                AND :today BETWEEN a.booking_checkin_dateandtime AND a.booking_checkout_dateandtime
+                ORDER BY a.booking_created_at DESC;
+                ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':today', $today);
+        $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
+        $stmt->execute();
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $bookings = [];
+
+        foreach ($rows as $row) {
+            $bookingId = $row['booking_id'];
+
+            // Initialize booking if not exists
+            if (!isset($bookings[$bookingId])) {
+                $bookings[$bookingId] = [
+                    "booking_id" => $row['booking_id'],
+                    "customers_id" => $row['customers_id'],
+                    "customers_walk_in_id" => $row['customers_walk_in_id'],
+                    "adult" => $row['adult'],
+                    "children" => $row['children'],
+                    "guests_amnt" => $row['guests_amnt'],
+                    "booking_downpayment" => $row['booking_downpayment'],
+                    "reference_no" => $row['reference_no'],
+                    "booking_checkin_dateandtime" => $row['booking_checkin_dateandtime'],
+                    "booking_checkout_dateandtime" => $row['booking_checkout_dateandtime'],
+                    "booking_created_at" => $row['booking_created_at'],
+                    "booking_isArchive" => $row['booking_isArchive'],
+                    "chargesTotal" => 0,
+                    "roomsTotal" => 0,
+                    "booking_totalAmount" => 0,
+                    "roomsList" => []
+                ];
+            }
+
+            // Always push room to array (no keying by booking_room_id)
+            $room = [
+                "booking_room_id" => $row['booking_room_id'],
+                "roomtype_id" => $row['roomtype_id'],
+                "roomtype_name" => $row['roomtype_name'],
+                "max_capacity" => $row['max_capacity'],
+                "roomtype_description" => $row['roomtype_description'],
+                "roomtype_price" => $row['roomtype_price'],
+                "roomnumber_id" => $row['roomnumber_id'],
+                "roomfloor" => $row['roomfloor'],
+                "room_status_id" => $row['room_status_id'],
+                "room_capacity" => $row['room_capacity'],
+                "room_beds" => $row['room_beds'],
+                "room_sizes" => $row['room_sizes'],
+                "charges" => [],
+                "chargesTotal" => 0
+            ];
+
+            // Add room price to booking total
+            $bookings[$bookingId]['roomsTotal'] += (float)$row['roomtype_price'];
+
+            // Add charge if exists
+            if ($row['booking_charges_id']) {
+                $chargePrice = ($row['booking_charges_price'] ?? $row['charges_master_price']) * $row['booking_charges_quantity'];
+
+                $room['charges'][] = [
+                    "booking_charges_id" => $row['booking_charges_id'],
+                    "charges_master_id" => $row['charges_master_id'],
+                    "booking_charges_price" => $row['booking_charges_price'],
+                    "booking_charges_quantity" => $row['booking_charges_quantity'],
+                    "charges_category_id" => $row['charges_category_id'],
+                    "charges_master_name" => $row['charges_master_name'],
+                    "charges_master_price" => $row['charges_master_price'],
+                    "total" => $chargePrice
+                ];
+
+                $room['chargesTotal'] += $chargePrice;
+                $bookings[$bookingId]['chargesTotal'] += $chargePrice;
+            }
+
+            $bookings[$bookingId]['roomsList'][] = $room;
+        }
+
+        // Compute booking total (rooms + charges)
+        foreach ($bookings as &$booking) {
+            $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
+        }
+
+        return array_values($bookings);
+    }
+
 } //customer
+
 
 
 
@@ -1221,6 +1328,9 @@ switch ($operation) {
         break;
     case "login":
         echo json_encode($demiren_customer->login($json));
+        break;
+    case "getBookingSummary":
+        echo json_encode($demiren_customer->getBookingSummary($json));
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
