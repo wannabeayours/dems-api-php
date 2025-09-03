@@ -442,9 +442,9 @@ class Demiren_customer
                 "roomnumber_id" => $row['roomnumber_id'],
                 "roomfloor" => $row['roomfloor'],
                 "room_status_id" => $row['room_status_id'],
-                "room_capacity" => $row['room_capacity'],
-                "room_beds" => $row['room_beds'],
-                "room_sizes" => $row['room_sizes']
+                "room_capacity" => $row['roomtype_capacity'],
+                "room_beds" => $row['roomtype_beds'],
+                "room_sizes" => $row['roomtype_sizes']
             ];
         }
 
@@ -823,7 +823,7 @@ class Demiren_customer
         $checkIn = $data["checkIn"];
         $checkOut = $data["checkOut"];
 
-        $sql = "SELECT MIN(a.roomnumber_id) AS room_ids, a.roomfloor, a.room_capacity, a.room_beds, a.room_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, 
+        $sql = "SELECT MIN(a.roomnumber_id) AS room_ids, a.roomfloor, b.roomtype_capacity, b.roomtype_beds, b.roomtype_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, 
                 c.status_id, COUNT(*) AS available_count
                 FROM tbl_rooms a
                 INNER JOIN tbl_roomtype b ON b.roomtype_id = a.roomtype_id
@@ -837,7 +837,7 @@ class Demiren_customer
                         WHERE bk.booking_checkin_dateandtime < :checkOut
                         AND bk.booking_checkout_dateandtime > :checkIn
                 )
-                AND a.room_capacity >= :guestNumber
+                AND b.roomtype_capacity >= :guestNumber
                 GROUP BY b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, c.status_id
         ";
 
@@ -914,7 +914,7 @@ class Demiren_customer
             FROM tbl_booking a
             LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
             INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-            INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
             INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
             INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
@@ -992,7 +992,7 @@ class Demiren_customer
             FROM tbl_booking a
             INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
             INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-            INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
             INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
             INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
@@ -1147,19 +1147,19 @@ class Demiren_customer
         $today = date("Y-m-d");
 
         $sql = "SELECT a.*, b.*, c.*, d.*, f.*, g.*, h.*
-                FROM tbl_booking a
-                INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-                INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-                INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-                LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
-                LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
-                LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
-                LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-                WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-                AND e.status_id = 2
-                AND :today BETWEEN a.booking_checkin_dateandtime AND a.booking_checkout_dateandtime
-                ORDER BY a.booking_created_at DESC;
-                ";
+        FROM tbl_booking a
+        INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+        INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+        INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+        LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+        LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
+        LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+        LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
+        WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+        AND e.status_id = 2
+        AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
+        ORDER BY a.booking_created_at DESC;
+        ";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':today', $today);
@@ -1207,9 +1207,9 @@ class Demiren_customer
                 "roomnumber_id" => $row['roomnumber_id'],
                 "roomfloor" => $row['roomfloor'],
                 "room_status_id" => $row['room_status_id'],
-                "room_capacity" => $row['room_capacity'],
-                "room_beds" => $row['room_beds'],
-                "room_sizes" => $row['room_sizes'],
+                "room_capacity" => $row['roomtype_capacity'],
+                "room_beds" => $row['roomtype_beds'],
+                "room_sizes" => $row['roomtype_sizes'],
                 "charges" => [],
                 "chargesTotal" => 0
             ];
