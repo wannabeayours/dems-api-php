@@ -1,6 +1,6 @@
 <?php
 $host = 'localhost';
-$dbname = 'freshdaw'; //put database name
+$dbname = 'freshv3'; //put database name
 $user = 'root';
 $pass = '';
 

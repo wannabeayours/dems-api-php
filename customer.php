@@ -379,23 +379,25 @@ class Demiren_customer
 
     function customerViewBookings($json)
     {
+        // {"booking_customer_id": 1}
         include "connection.php";
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
 
         $sql = "SELECT a.*, b.*, c.*, d.*
-            FROM tbl_booking a
-            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-            INNER JOIN tbl_rooms d ON d.roomtype_id = c.roomtype_id
-            WHERE 
-                (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-                AND a.booking_id NOT IN (
-                    SELECT booking_id 
-                    FROM tbl_booking_history 
-                    WHERE booking_id = a.booking_id
-                )
-            ORDER BY a.booking_created_at DESC";
+                    FROM tbl_booking a
+                    LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+                    LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+                    LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+                    WHERE 
+                        (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+                        AND a.booking_id NOT IN (
+                            SELECT booking_id 
+                            FROM tbl_booking_history 
+                            WHERE booking_id = a.booking_id
+                        )
+                    ORDER BY a.booking_created_at DESC
+                ";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':bookingCustomerId', $bookingCustomerId);
@@ -812,7 +814,6 @@ class Demiren_customer
             return "Error: " . $e->getMessage();
         }
     }
-
     function getAvailableRoomsWithGuests($json)
     {
         // {"guestNumber": 2, "checkIn": "2025-08-29 22:15:00", "checkOut": "2025-10-14 12:00:00"}
@@ -822,17 +823,22 @@ class Demiren_customer
         $checkIn = $data["checkIn"];
         $checkOut = $data["checkOut"];
 
-        $sql = "SELECT a.roomnumber_id AS room_ids, a.roomfloor, a.room_capacity, a.room_beds AS room_beds, a.room_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, c.status_name, c.status_id
+        $sql = "SELECT MIN(a.roomnumber_id) AS room_ids, a.roomfloor, a.room_capacity, a.room_beds, a.room_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, 
+                c.status_id, COUNT(*) AS available_count
                 FROM tbl_rooms a
                 INNER JOIN tbl_roomtype b ON b.roomtype_id = a.roomtype_id
                 INNER JOIN tbl_status_types c ON c.status_id = a.room_status_id
-                WHERE a.room_status_id = 3 AND a.roomtype_id NOT IN (
-                    SELECT a.roomtype_id
-                    FROM tbl_booking_room a
-                    INNER JOIN tbl_booking b ON b.booking_id = a.booking_id
-                    WHERE b.booking_checkin_dateandtime < :checkOut 
-                    AND b.booking_checkout_dateandtime > :checkIn
-                ) AND a.room_capacity >= :guestNumber
+                WHERE a.room_status_id = 3
+                AND a.roomnumber_id NOT IN (
+                        SELECT br.roomnumber_id
+                        FROM tbl_booking_room br
+                        INNER JOIN tbl_booking bk 
+                                ON bk.booking_id = br.booking_id    
+                        WHERE bk.booking_checkin_dateandtime < :checkOut
+                        AND bk.booking_checkout_dateandtime > :checkIn
+                )
+                AND a.room_capacity >= :guestNumber
+                GROUP BY b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, c.status_id
         ";
 
         $stmt = $conn->prepare($sql);
@@ -853,6 +859,8 @@ class Demiren_customer
         //     "roomDetails":[ {"roomTypeId":1}, {"roomTypeId":2} ]
         // }
         //THANK YOU <333 😭 XOXO xD
+        //okay?
+        //yessssss
         include "connection.php";
         $json = json_decode($json, true);
 
@@ -1138,14 +1146,15 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
 
-        $sql = "SELECT a.*, b.*, c.*, d.*, f.*, g.*
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.*, g.*, h.*
                 FROM tbl_booking a
                 INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
                 INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
                 INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-                INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+                LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
                 LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
                 LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+                LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
                 WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
                 AND e.status_id = 2
                 AND :today BETWEEN a.booking_checkin_dateandtime AND a.booking_checkout_dateandtime
@@ -1159,6 +1168,8 @@ class Demiren_customer
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $bookings = [];
+        // echo json_encode($rows);
+        // die();
 
         foreach ($rows as $row) {
             $bookingId = $row['booking_id'];
@@ -1218,6 +1229,7 @@ class Demiren_customer
                     "charges_category_id" => $row['charges_category_id'],
                     "charges_master_name" => $row['charges_master_name'],
                     "charges_master_price" => $row['charges_master_price'],
+                    "charges_category_name" => $row['charges_category_name'],
                     "total" => $chargePrice
                 ];
 
@@ -1235,6 +1247,84 @@ class Demiren_customer
 
         return array_values($bookings);
     }
+
+    function checkAndSendOTP($json)
+    {
+        include "connection.php";
+        $data = json_decode($json, true);
+
+        try {
+            // 1. Check if email already exists in tbl_customers (with online account)
+            $sql = "SELECT c.customers_id 
+                    FROM tbl_customers c
+                    WHERE c.customers_email = :email 
+                    AND c.customers_online_id IS NOT NULL 
+                    LIMIT 1";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":email", $data["guest_email"]);
+            $stmt->execute();
+
+            if ($stmt->rowCount() > 0) {
+                return json_encode([
+                    "success" => false,
+                    "message" => "Email already registered as an online customer."
+                ]);
+            }
+
+            // 2. Also check tbl_customers_online (in case of direct registration record)
+            $sql = "SELECT customers_online_id 
+                    FROM tbl_customers_online 
+                    WHERE customers_online_username = :email 
+                    LIMIT 1";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":email", $data["guest_email"]);
+            $stmt->execute();
+
+            if ($stmt->rowCount() > 0) {
+                return json_encode([
+                    "success" => false,
+                    "message" => "Email already exists in online accounts."
+                ]);
+            }
+
+            // 3. Generate OTP (6-digit)
+            $otp = str_pad(rand(0, 999999), 6, "0", STR_PAD_LEFT);
+
+            // 4. Expiration time (5 minutes from now)
+            $expiration = date("Y-m-d H:i:s", strtotime("+5 minutes"));
+
+            // 5. Clean expired OTPs
+            $stmt = $conn->prepare("
+            DELETE FROM tbl_customer_otp 
+            WHERE guest_email = :email 
+              AND expiration_date < NOW()
+        ");
+            $stmt->bindParam(":email", $data["guest_email"]);
+            $stmt->execute();
+
+            // 6. Insert new OTP
+            $stmt = $conn->prepare("INSERT INTO tbl_customer_otp 
+                                        (guest_email, otp_code, expiration_date, attempts, locked_until)
+                                    VALUES 
+                                        (:email, :otp, :expiration, 0, NULL)");
+            $stmt->bindParam(":email", $data["guest_email"]);
+            $stmt->bindParam(":otp", $otp);
+            $stmt->bindParam(":expiration", $expiration);
+            $stmt->execute();
+
+            return json_encode([
+                "success" => true,
+                "message" => "OTP generated successfully.",
+                "otp" => $otp // ⚠️ return only for testing, remove later when email sending is ready
+            ]);
+        } catch (PDOException $e) {
+            return json_encode([
+                "success" => false,
+                "message" => $e->getMessage()
+            ]);
+        }
+    }
+
 
 } //customer
 
@@ -1332,6 +1422,9 @@ switch ($operation) {
     case "getBookingSummary":
         echo json_encode($demiren_customer->getBookingSummary($json));
         break;
+    case "checkAndSendOTP";
+    echo $demiren_customer->checkAndSendOTP($json);
+    break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;
