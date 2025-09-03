@@ -1151,12 +1151,11 @@ class Demiren_customer
         INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
         INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
         INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-        LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+        LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id AND e.status_id = 2
         LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
         LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
         LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
         WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-        AND e.status_id = 2
         AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
         ORDER BY a.booking_created_at DESC;
         ";
