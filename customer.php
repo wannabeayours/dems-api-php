@@ -1106,7 +1106,8 @@ class Demiren_customer
         }
     }
 
-    function login($json){
+    function login($json)
+    {
         // {"username":"sabils","password":"sabils"}
         include "connection.php";
         $data = json_decode($json, true);
@@ -1119,7 +1120,7 @@ class Demiren_customer
         $stmt->bindParam(":customers_online_password", $data["password"]);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
-        
+
         // $customer = $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
         // if($customer == 0){
         //     return $this->employeeLogin($json);
@@ -1128,7 +1129,8 @@ class Demiren_customer
         // }
     }
 
-    function employeeLogin($json){
+    function employeeLogin($json)
+    {
         include "connection.php";
         $data = json_decode($json, true);
         $sql = " SELECT * FROM tbl_employee WHERE employee_username = :employee_username AND BINARY employee_password = :employee_password";
@@ -1325,7 +1327,14 @@ class Demiren_customer
         }
     }
 
-
+    function getAmenitiesMaster() {
+        include "connection.php";
+        $sql = "SELECT a.*, b.charges_category_name FROM tbl_charges_master a 
+                INNER JOIN tbl_charges_category b ON b.charges_category_id = a.charges_category_id";
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    }
 } //customer
 
 
@@ -1423,8 +1432,11 @@ switch ($operation) {
         echo json_encode($demiren_customer->getBookingSummary($json));
         break;
     case "checkAndSendOTP";
-    echo $demiren_customer->checkAndSendOTP($json);
-    break;
+        echo $demiren_customer->checkAndSendOTP($json);
+        break;
+    case "getAmenitiesMaster":
+        echo json_encode($demiren_customer->getAmenitiesMaster());
+        break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;
