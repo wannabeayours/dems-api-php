@@ -538,8 +538,9 @@ class Demiren_customer
     function customerCancelBooking($json)
     {
         include "connection.php";
+        date_default_timezone_set('Asia/Manila');
         $json = json_decode($json, true);
-        $sql = "INSERT INTO tbl_booking_history (booking_id, status_id) VALUES (:booking_id, 4)";
+        $sql = "INSERT INTO tbl_booking_history (booking_id, status_id, updated_at) VALUES (:booking_id, 4, NOW())";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":booking_id", $json["booking_id"]);
         $stmt->execute();
@@ -632,9 +633,9 @@ class Demiren_customer
         GROUP_CONCAT(DISTINCT a.imagesroommaster_filename) AS images,
         b.roomtype_price, 
         GROUP_CONCAT(DISTINCT c.roomnumber_id) AS room_ids,
-        GROUP_CONCAT(DISTINCT  c.room_beds) AS room_beds,
-        GROUP_CONCAT(DISTINCT c.room_capacity) AS room_capacity,
-        GROUP_CONCAT(DISTINCT c.room_sizes) AS room_sizes,
+        GROUP_CONCAT(DISTINCT  b.roomtype_beds) AS room_beds,
+        GROUP_CONCAT(DISTINCT b.roomtype_capacity) AS room_capacity,
+        GROUP_CONCAT(DISTINCT b.roomtype_sizes) AS room_sizes,
         -- GROUP_CONCAT(DISTINCT e.room_amenities_master_name) AS amenities,
         f.status_name,
         f.status_id
@@ -913,10 +914,10 @@ class Demiren_customer
         $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
             FROM tbl_booking a
             LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-            INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
-            INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+            LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+            LEFT JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 0
             ORDER BY a.booking_id DESC";
@@ -990,11 +991,11 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
             FROM tbl_booking a
-            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-            INNER JOIN tbl_booking_history e ON e.booking_id = a.booking_id
-            INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+            LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+            LEFT JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 1
             ORDER BY a.booking_created_at DESC";
