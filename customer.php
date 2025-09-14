@@ -1141,27 +1141,32 @@ class Demiren_customer
         return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
     }
 
-    function getBookingSummary($json)
+ function getBookingSummary($json)
     {
-        // {"booking_customer_id":1}
         include "connection.php";
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
 
-        $sql = "SELECT a.*, b.*, c.*, d.*, f.*, g.*, h.*
-        FROM tbl_booking a
-        INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-        INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-        INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-        LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id AND e.status_id = 2
-        LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
-        LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
-        LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-        WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-        AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
-        ORDER BY a.booking_created_at DESC;
-        ";
+        $sql = "SELECT a.*, b.*, c.*, d.*, 
+                f.booking_charges_id,
+                f.booking_charges_quantity,
+                f.booking_charges_price,
+                g.charges_master_id,
+                g.charges_master_name,
+                g.charges_master_price,
+                h.charges_category_id,
+                h.charges_category_name
+            FROM tbl_booking a
+            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+            LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
+            LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+            LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
+            WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+              AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
+            ORDER BY a.booking_created_at DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':today', $today);
@@ -1169,14 +1174,15 @@ class Demiren_customer
         $stmt->execute();
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        file_put_contents('debug_rows.txt', print_r($rows, true));
+
         $bookings = [];
-        // echo json_encode($rows);
-        // die();
 
         foreach ($rows as $row) {
             $bookingId = $row['booking_id'];
+            $roomKey = $row['booking_room_id'];
 
-            // Initialize booking if not exists
             if (!isset($bookings[$bookingId])) {
                 $bookings[$bookingId] = [
                     "booking_id" => $row['booking_id'],
@@ -1193,59 +1199,67 @@ class Demiren_customer
                     "booking_isArchive" => $row['booking_isArchive'],
                     "chargesTotal" => 0,
                     "roomsTotal" => 0,
-                    "booking_totalAmount" => 0,
+                    "booking_totalAmount" => $row['booking_totalAmount'],
                     "roomsList" => []
                 ];
             }
 
-            // Always push room to array (no keying by booking_room_id)
-            $room = [
-                "booking_room_id" => $row['booking_room_id'],
-                "roomtype_id" => $row['roomtype_id'],
-                "roomtype_name" => $row['roomtype_name'],
-                "max_capacity" => $row['max_capacity'],
-                "roomtype_description" => $row['roomtype_description'],
-                "roomtype_price" => $row['roomtype_price'],
-                "roomnumber_id" => $row['roomnumber_id'],
-                "roomfloor" => $row['roomfloor'],
-                "room_status_id" => $row['room_status_id'],
-                "room_capacity" => $row['roomtype_capacity'],
-                "room_beds" => $row['roomtype_beds'],
-                "room_sizes" => $row['roomtype_sizes'],
-                "charges" => [],
-                "chargesTotal" => 0
-            ];
-
-            // Add room price to booking total
-            $bookings[$bookingId]['roomsTotal'] += (float)$row['roomtype_price'];
-
-            // Add charge if exists
-            if ($row['booking_charges_id']) {
-                $chargePrice = ($row['booking_charges_price'] ?? $row['charges_master_price']) * $row['booking_charges_quantity'];
-
-                $room['charges'][] = [
-                    "booking_charges_id" => $row['booking_charges_id'],
-                    "charges_master_id" => $row['charges_master_id'],
-                    "booking_charges_price" => $row['booking_charges_price'],
-                    "booking_charges_quantity" => $row['booking_charges_quantity'],
-                    "charges_category_id" => $row['charges_category_id'],
-                    "charges_master_name" => $row['charges_master_name'],
-                    "charges_master_price" => $row['charges_master_price'],
-                    "charges_category_name" => $row['charges_category_name'],
-                    "total" => $chargePrice
+            if (!isset($bookings[$bookingId]['roomsList'][$roomKey])) {
+                $bookings[$bookingId]['roomsList'][$roomKey] = [
+                    "booking_room_id" => $row['booking_room_id'],
+                    "roomtype_id" => $row['roomtype_id'],
+                    "roomtype_name" => $row['roomtype_name'],
+                    "roomtype_description" => $row['roomtype_description'],
+                    "roomtype_price" => (float)$row['roomtype_price'],
+                    "roomnumber_id" => $row['roomnumber_id'],
+                    "roomfloor" => $row['roomfloor'],
+                    "room_status_id" => $row['room_status_id'],
+                    "charges_raw" => [],
                 ];
-
-                $room['chargesTotal'] += $chargePrice;
-                $bookings[$bookingId]['chargesTotal'] += $chargePrice;
+                $bookings[$bookingId]['roomsTotal'] += (float)$row['roomtype_price'];
             }
 
-            $bookings[$bookingId]['roomsList'][] = $room;
+            if ($row['booking_charges_id']) {
+                $bookings[$bookingId]['roomsList'][$roomKey]['charges_raw'][] = [
+                    "charges_master_id" => $row['charges_master_id'],
+                    "qty" => $row['booking_charges_quantity'],
+                    "price" => $row['booking_charges_price'],
+                    "category" => $row['charges_category_name'],
+                    "name" => $row['charges_master_name']
+                ];
+                $bookings[$bookingId]['chargesTotal'] += $row['booking_charges_price'];
+            }
         }
 
-        // Compute booking total (rooms + charges)
         foreach ($bookings as &$booking) {
-            $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
+            foreach ($booking['roomsList'] as &$room) {
+                $grouped = [];
+                foreach ($room['charges_raw'] as $c) {
+                    $id = $c['charges_master_id'];
+                    if (!isset($grouped[$id])) {
+                        $grouped[$id] = [
+                            "charges_master_id" => $id,
+                            "charges_master_name" => $c['name'],
+                            "charges_category_name" => $c['category'],
+                            "booking_charges_quantity" => 0,
+                            "booking_charges_price" => 0,
+                            "total" => 0
+                        ];
+                    }
+                    $grouped[$id]['booking_charges_quantity'] += $c['qty'];
+                    $grouped[$id]['total'] += $c['price'];
+                    $grouped[$id]['booking_charges_price'] =
+                        $grouped[$id]['total'] / $grouped[$id]['booking_charges_quantity'];
+                }
+                $room['charges'] = array_values($grouped);
+                unset($room['charges_raw']);
+            }
+            $booking['roomsList'] = array_values($booking['roomsList']);
+            // $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
         }
+
+        // // Debug bookings result
+        // file_put_contents('debug_bookings.txt', print_r($bookings, true));
 
         return array_values($bookings);
     }
@@ -1327,7 +1341,8 @@ class Demiren_customer
         }
     }
 
-    function getAmenitiesMaster() {
+    function getAmenitiesMaster()
+    {
         include "connection.php";
         $sql = "SELECT a.*, b.charges_category_name FROM tbl_charges_master a 
                 INNER JOIN tbl_charges_category b ON b.charges_category_id = a.charges_category_id";
@@ -1335,6 +1350,64 @@ class Demiren_customer
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
     }
+
+     function addBookingCharges($json)
+    {
+        // {"bookingId": 41, 
+        //  "charges": [
+        //    {"booking_room_id":32, "charges_master_id":1, "charges_quantity":2, "booking_charges_price": 200}, 
+        //    {"booking_room_id":32, "charges_master_id":2, "charges_quantity":1, "booking_charges_price": 400}
+        //  ]
+        // }
+        include "connection.php";
+
+        $data = json_decode($json, true);
+
+        $charges = $data["charges"];
+        $bookingId = $data["bookingId"];
+
+        try {
+            $conn->beginTransaction();
+
+            $sqlInsert = "INSERT INTO tbl_booking_charges 
+            (booking_room_id, charges_master_id, booking_charges_quantity, booking_charges_price)
+            VALUES 
+            (:booking_room_id, :charges_master_id, :charges_quantity, :booking_charges_price)";
+            $stmtInsert = $conn->prepare($sqlInsert);
+
+            $totalPrice = 0;
+            foreach ($charges as $charge) {
+                $stmtInsert->bindParam(":booking_room_id", $charge["booking_room_id"]);
+                $stmtInsert->bindParam(":charges_master_id", $charge["charges_master_id"]);
+                $stmtInsert->bindParam(":charges_quantity", $charge["charges_quantity"]);
+                $stmtInsert->bindParam(":booking_charges_price", $charge["booking_charges_price"]);
+                $stmtInsert->execute();
+
+                $totalPrice += $charge["booking_charges_price"];
+            }
+
+            $sqlSelect = "SELECT booking_totalAmount FROM tbl_booking WHERE booking_id = :bookingId";
+            $stmtSelect = $conn->prepare($sqlSelect);
+            $stmtSelect->bindParam(":bookingId", $bookingId);
+            $stmtSelect->execute();
+            $currentTotal = $stmtSelect->fetchColumn();
+
+            $newTotal = $currentTotal + $totalPrice;
+
+            $sqlUpdate = "UPDATE tbl_booking SET booking_totalAmount = :newTotal WHERE booking_id = :bookingId";
+            $stmtUpdate = $conn->prepare($sqlUpdate);
+            $stmtUpdate->bindParam(":newTotal", $newTotal);
+            $stmtUpdate->bindParam(":bookingId", $bookingId);
+            $stmtUpdate->execute();
+
+            $conn->commit();
+            return 1;
+        } catch (PDOException $e) {
+            $conn->rollBack();
+            return 0;
+        }
+    }
+
 } //customer
 
 
@@ -1436,6 +1509,9 @@ switch ($operation) {
         break;
     case "getAmenitiesMaster":
         echo json_encode($demiren_customer->getAmenitiesMaster());
+        break;
+    case "addBookingCharges":
+        echo json_encode($demiren_customer->addBookingCharges($json));
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
