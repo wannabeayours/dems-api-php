@@ -630,6 +630,7 @@ class Demiren_customer
         b.max_capacity,
         b.roomtype_description,
         b.roomtype_name, 
+        b.roomtype_image,
         GROUP_CONCAT(DISTINCT a.imagesroommaster_filename) AS images,
         b.roomtype_price, 
         GROUP_CONCAT(DISTINCT c.roomnumber_id) AS room_ids,
@@ -824,7 +825,7 @@ class Demiren_customer
         $checkIn = $data["checkIn"];
         $checkOut = $data["checkOut"];
 
-        $sql = "SELECT MIN(a.roomnumber_id) AS room_ids, a.roomfloor, b.roomtype_capacity, b.roomtype_beds, b.roomtype_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, 
+        $sql = "SELECT MIN(a.roomnumber_id) AS room_ids, a.roomfloor, b.roomtype_capacity, b.roomtype_beds, b.roomtype_sizes, b.roomtype_id, b.roomtype_name, b.roomtype_description, b.roomtype_price, b.roomtype_image,
                 c.status_id, COUNT(*) AS available_count
                 FROM tbl_rooms a
                 INNER JOIN tbl_roomtype b ON b.roomtype_id = a.roomtype_id
@@ -1528,3 +1529,5 @@ switch ($operation) {
 //ang image sa logobells dapat ilisan 
 //WALA KOY MOUSE :((
 //2029??!!!! the helly
+//ayoko na
+//tama na
