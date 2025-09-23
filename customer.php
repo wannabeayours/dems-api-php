@@ -469,8 +469,6 @@ class Demiren_customer
                     "booking_totalAmount" => $row['booking_totalAmount'],
                     "customers_id" => $row['customers_id'],
                     "customers_walk_in_id" => $row['customers_walk_in_id'],
-                    "adult" => $row['adult'],
-                    "children" => $row['children'],
                     "guests_amnt" => $row['guests_amnt'],
                     "booking_totalAmount" => $row['booking_totalAmount'],
                     "booking_downpayment" => $row['booking_downpayment'],
@@ -938,7 +936,7 @@ class Demiren_customer
 
 
 
-    function customerBookingWithAccount($json)
+   function customerBookingWithAccount($json)
     {
         // {
         //     "customerId":2,
@@ -948,7 +946,6 @@ class Demiren_customer
         //THANK YOU <333 😭 XOXO xD
         //okay?
         //yessssss
-
         include "connection.php";
         $json = json_decode($json, true);
 
@@ -1001,31 +998,28 @@ class Demiren_customer
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
                 (customers_id, guests_amnt, customers_walk_in_id, booking_downpayment, 
-                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
-                 children, adult, booking_totalAmount) 
+                booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_totalAmount) 
             VALUES 
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
-                 :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), 
-                 :children, :adult, :totalAmount)
-        ");
+                :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount)");
             $stmt->bindParam(":customers_id", $customerId);
             $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
             $stmt->bindParam(":booking_checkin_dateandtime", $checkIn);
             $stmt->bindParam(":booking_checkout_dateandtime", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":guestTotalAmount", $totalGuests);
-            $stmt->bindParam(":children", $bookingDetails["children"]);
-            $stmt->bindParam(":adult", $bookingDetails["adult"]);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
             // Insert booking room records without assigning specific room numbers
-            $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id) 
-                VALUES (:booking_id, :roomtype_id, NULL)";
+            $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
+                VALUES (:booking_id, :roomtype_id, NULL, :bookingRoom_adult, :bookingRoom_children)";
             foreach ($roomDetails as $room) {
                 $stmt = $conn->prepare($sql);
                 $stmt->bindParam(":booking_id", $bookingId);
                 $stmt->bindParam(":roomtype_id", $room["roomTypeId"]);
+                $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
+                $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
             }
 
@@ -1380,25 +1374,27 @@ class Demiren_customer
         $today = date("Y-m-d");
 
         $sql = "SELECT a.*, b.*, c.*, d.*, 
-       f.booking_charges_id,
-       f.booking_charges_quantity,
-       f.booking_charges_price,
-       g.charges_master_id,
-       g.charges_master_name,
-       g.charges_master_price,
-       h.charges_category_id,
-       h.charges_category_name
-    FROM tbl_booking a
-    INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-    INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-    INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-    LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
-    LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
-    LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-    WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-    AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
-    GROUP BY a.booking_id, b.booking_room_id
-    ORDER BY a.booking_created_at DESC";
+                f.booking_charges_id,
+                f.booking_charges_quantity,
+                f.booking_charges_price,
+                g.charges_master_id,
+                g.charges_master_status_id,
+                g.charges_master_name,
+                g.charges_master_price,
+                h.charges_category_id,
+                h.charges_category_name,
+                i.charges_status_name
+            FROM tbl_booking a
+            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+            LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
+            LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+            LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
+            INNER JOIN tbl_charges_status i ON i.charges_status_id = g.charges_master_status_id
+            WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+              AND DATE(:today) BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
+            ORDER BY a.booking_created_at DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':today', $today);
@@ -1420,8 +1416,6 @@ class Demiren_customer
                     "booking_id" => $row['booking_id'],
                     "customers_id" => $row['customers_id'],
                     "customers_walk_in_id" => $row['customers_walk_in_id'],
-                    "adult" => $row['adult'],
-                    "children" => $row['children'],
                     "guests_amnt" => $row['guests_amnt'],
                     "booking_downpayment" => $row['booking_downpayment'],
                     "reference_no" => $row['reference_no'],
@@ -1473,6 +1467,8 @@ class Demiren_customer
                             "charges_master_id" => $id,
                             "charges_master_name" => $c['name'],
                             "charges_category_name" => $c['category'],
+                            "charges_master_status_id" => $row['charges_master_status_id'],
+                            "charges_status_name" => $row['charges_status_name'],
                             "booking_charges_quantity" => 0,
                             "booking_charges_price" => 0,
                             "total" => 0

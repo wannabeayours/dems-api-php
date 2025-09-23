@@ -704,8 +704,8 @@ class Admin_Functions
                     FROM tbl_booking_history bh
                     INNER JOIN tbl_booking_status bs 
                         ON bh.status_id = bs.booking_status_id
-                    WHERE bh.status_id IN (
-                        SELECT MAX(status_id)
+                    WHERE bh.booking_history_id IN (
+                        SELECT MAX(booking_history_id)
                         FROM tbl_booking_history
                         GROUP BY booking_id
                     )
@@ -2015,6 +2015,10 @@ switch ($methodType) {
 
     case "viewNationalities":
         echo $AdminClass->getAllNationalities();
+        break;
+
+    case "getAllStatus":
+        echo $AdminClass->getAllBookingStatus();
         break;
 
     // Room Management or Something?
