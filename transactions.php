@@ -339,9 +339,16 @@ class Transactions
         $employee_id = $json["employee_id"];
         $payment_method_id = $json["payment_method_id"];
         $invoice_status_id = $json["invoice_status_id"] ?? 1;
+        $discount_id = $json["discount_id"] ?? null;
+        $vat_rate = $json["vat_rate"] ?? 0.12; // Default 12% VAT
+        $downpayment = $json["downpayment"] ?? 0;
 
         $invoice_date = date("Y-m-d");
         $invoice_time = date("H:i:s");
+        $results = [];
+
+        try {
+            $conn->beginTransaction();
 
         foreach ($billing_ids as $billing_id) {
             // 1. Get the booking_id linked to this billing_id
@@ -350,46 +357,40 @@ class Transactions
             $stmt->execute();
             $billingRow = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if (!$billingRow) continue;
+                if (!$billingRow) {
+                    $results[] = ["billing_id" => $billing_id, "status" => "error", "message" => "Billing not found"];
+                    continue;
+                }
 
             $booking_id = $billingRow["booking_id"];
 
-            // 2. Calculate room charges
-            $roomQuery = $conn->prepare("
-            SELECT SUM(c.room_price) AS room_total
-            FROM tbl_booking_room b
-            JOIN tbl_rooms c ON b.roomnumber_id = c.room_id
-            WHERE b.booking_id = :booking_id
-        ");
-            $roomQuery->bindParam(':booking_id', $booking_id);
-            $roomQuery->execute();
-            $room_total = $roomQuery->fetchColumn() ?: 0;
+                // 2. Calculate comprehensive billing breakdown
+                $billingBreakdown = $this->calculateComprehensiveBillingInternal($conn, $booking_id, $discount_id, $vat_rate, $downpayment);
 
-            // 3. Calculate additional/other charges
-            $chargesQuery = $conn->prepare("
-            SELECT SUM(d.booking_charges_price * d.booking_charges_quantity) AS charge_total
-            FROM tbl_booking_charges d
-            JOIN tbl_booking_room b ON d.booking_room_id = b.booking_room_id
-            WHERE b.booking_id = :booking_id
-        ");
-            $chargesQuery->bindParam(':booking_id', $booking_id);
-            $chargesQuery->execute();
-            $charge_total = $chargesQuery->fetchColumn() ?: 0;
+                if (!$billingBreakdown["success"]) {
+                    $results[] = ["billing_id" => $billing_id, "status" => "error", "message" => $billingBreakdown["message"]];
+                    continue;
+                }
 
-            // 4. Final total = rooms + other charges
-            $final_total = $room_total + $charge_total;
-
-            // 5. Update billing total and balance
+                // 3. Update billing with comprehensive totals
             $updateBilling = $conn->prepare("
             UPDATE tbl_billing 
-            SET billing_total_amount = :total, billing_balance = :total
+                    SET billing_total_amount = :total, 
+                        billing_balance = :balance,
+                        billing_downpayment = :downpayment,
+                        billing_vat = :vat,
+                        discounts_id = :discount_id
             WHERE billing_id = :billing_id
         ");
-            $updateBilling->bindParam(':total', $final_total);
+                $updateBilling->bindParam(':total', $billingBreakdown["final_total"]);
+                $updateBilling->bindParam(':balance', $billingBreakdown["balance"]);
+                $updateBilling->bindParam(':downpayment', $downpayment);
+                $updateBilling->bindParam(':vat', $billingBreakdown["vat_amount"]);
+                $updateBilling->bindParam(':discount_id', $discount_id);
             $updateBilling->bindParam(':billing_id', $billing_id);
             $updateBilling->execute();
 
-            // 6. Create invoice
+                // 4. Create invoice
             $insert = $conn->prepare("
             INSERT INTO tbl_invoice (
                 billing_id, employee_id, payment_method_id,
@@ -405,16 +406,492 @@ class Transactions
             $insert->bindParam(':payment_method_id', $payment_method_id);
             $insert->bindParam(':invoice_date', $invoice_date);
             $insert->bindParam(':invoice_time', $invoice_time);
-            $insert->bindParam(':invoice_total_amount', $final_total);
+                $insert->bindParam(':invoice_total_amount', $billingBreakdown["final_total"]);
             $insert->bindParam(':invoice_status_id', $invoice_status_id);
             $insert->execute();
 
-            // 7. Optionally zero out billing balance (if paid in full)
-            $conn->prepare("UPDATE tbl_billing SET billing_balance = 0 WHERE billing_id = :billing_id")
-                ->execute([':billing_id' => $billing_id]);
-        }
+                $invoice_id = $conn->lastInsertId();
 
-        echo json_encode(["success" => true, "message" => "Invoices created with updated charges."]);
+                // 5. Log billing activity
+                $this->logBillingActivity($conn, $billing_id, $invoice_id, $employee_id, "INVOICE_CREATED", $billingBreakdown);
+
+                $results[] = [
+                    "billing_id" => $billing_id,
+                    "invoice_id" => $invoice_id,
+                    "status" => "success",
+                    "breakdown" => $billingBreakdown
+                ];
+            }
+
+            $conn->commit();
+            echo json_encode([
+                "success" => true, 
+                "message" => "Invoices created successfully with comprehensive billing validation.",
+                "results" => $results
+            ]);
+
+        } catch (Exception $e) {
+            $conn->rollBack();
+            echo json_encode([
+                "success" => false, 
+                "message" => "Error creating invoices: " . $e->getMessage()
+            ]);
+        }
+    }
+
+    function calculateComprehensiveBillingInternal($conn, $booking_id, $discount_id = null, $vat_rate = 0.12, $downpayment = 0)
+    {
+        try {
+            // 1. Calculate room charges (fixed the room price query)
+            $roomQuery = $conn->prepare("
+                SELECT 
+                    SUM(rt.roomtype_price) AS room_total,
+                    COUNT(br.booking_room_id) AS room_count
+                FROM tbl_booking_room br
+                JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
+                WHERE br.booking_id = :booking_id
+            ");
+            $roomQuery->bindParam(':booking_id', $booking_id);
+            $roomQuery->execute();
+            $roomData = $roomQuery->fetch(PDO::FETCH_ASSOC);
+            $room_total = $roomData['room_total'] ?: 0;
+
+            // 2. Calculate additional charges (amenities, services, etc.)
+            $chargesQuery = $conn->prepare("
+                SELECT 
+                    SUM(bc.booking_charges_price * bc.booking_charges_quantity) AS charge_total,
+                    COUNT(bc.booking_charges_id) AS charge_count
+                FROM tbl_booking_charges bc
+                JOIN tbl_booking_room br ON bc.booking_room_id = br.booking_room_id
+                WHERE br.booking_id = :booking_id
+            ");
+            $chargesQuery->bindParam(':booking_id', $booking_id);
+            $chargesQuery->execute();
+            $chargeData = $chargesQuery->fetch(PDO::FETCH_ASSOC);
+            $charge_total = $chargeData['charge_total'] ?: 0;
+
+            // 3. Calculate subtotal
+            $subtotal = $room_total + $charge_total;
+
+            // 4. Apply discount if provided
+            $discount_amount = 0;
+            if ($discount_id) {
+                $discountQuery = $conn->prepare("
+                    SELECT discounts_percentage, discounts_amount 
+                    FROM tbl_discounts 
+                    WHERE discounts_id = :discount_id
+                ");
+                $discountQuery->bindParam(':discount_id', $discount_id);
+                $discountQuery->execute();
+                $discount = $discountQuery->fetch(PDO::FETCH_ASSOC);
+                
+                if ($discount) {
+                    if ($discount['discounts_percentage']) {
+                        $discount_amount = $subtotal * ($discount['discounts_percentage'] / 100);
+                    } else {
+                        $discount_amount = $discount['discounts_amount'];
+                    }
+                }
+            }
+
+            // 5. Calculate amount after discount
+            $amount_after_discount = $subtotal - $discount_amount;
+
+            // 6. Calculate VAT
+            $vat_amount = $amount_after_discount * $vat_rate;
+
+            // 7. Calculate final total
+            $final_total = $amount_after_discount + $vat_amount;
+
+            // 8. Calculate balance after downpayment
+            $balance = $final_total - $downpayment;
+
+            return [
+                "success" => true,
+                "room_total" => $room_total,
+                "charge_total" => $charge_total,
+                "subtotal" => $subtotal,
+                "discount_amount" => $discount_amount,
+                "amount_after_discount" => $amount_after_discount,
+                "vat_amount" => $vat_amount,
+                "final_total" => $final_total,
+                "downpayment" => $downpayment,
+                "balance" => $balance,
+                "room_count" => $roomData['room_count'],
+                "charge_count" => $chargeData['charge_count']
+            ];
+
+        } catch (Exception $e) {
+            return [
+                "success" => false,
+                "message" => "Error calculating billing: " . $e->getMessage()
+            ];
+        }
+    }
+
+    function logBillingActivity($conn, $billing_id, $invoice_id, $employee_id, $activity_type, $data = null)
+    {
+        try {
+            // Check if the table exists before trying to insert
+            $checkTable = $conn->prepare("SHOW TABLES LIKE 'tbl_billing_activity_log'");
+            $checkTable->execute();
+            
+            if ($checkTable->rowCount() > 0) {
+                $stmt = $conn->prepare("
+                    INSERT INTO tbl_billing_activity_log (
+                        billing_id, invoice_id, employee_id, activity_type, 
+                        activity_data, created_at
+                    ) VALUES (
+                        :billing_id, :invoice_id, :employee_id, :activity_type,
+                        :activity_data, NOW()
+                    )
+                ");
+                $stmt->bindParam(':billing_id', $billing_id);
+                $stmt->bindParam(':invoice_id', $invoice_id);
+                $stmt->bindParam(':employee_id', $employee_id);
+                $stmt->bindParam(':activity_type', $activity_type);
+                $stmt->bindParam(':activity_data', json_encode($data));
+                $stmt->execute();
+            }
+        } catch (Exception $e) {
+            // Log error but don't fail the main operation
+            error_log("Failed to log billing activity: " . $e->getMessage());
+        }
+    }
+
+    function validateBillingCompleteness($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+
+        try {
+            // Check if there are any pending charges not yet billed
+            // Only consider charges as "pending" if there's no billing record at all
+            $pendingChargesQuery = $conn->prepare("
+                SELECT COUNT(*) as pending_count
+                FROM tbl_booking_charges bc
+                JOIN tbl_booking_room br ON bc.booking_room_id = br.booking_room_id
+                LEFT JOIN tbl_billing b ON br.booking_id = b.booking_id
+                WHERE br.booking_id = :booking_id 
+                AND b.billing_id IS NULL
+            ");
+            $pendingChargesQuery->bindParam(':booking_id', $booking_id);
+            $pendingChargesQuery->execute();
+            $pendingCount = $pendingChargesQuery->fetchColumn();
+
+            // Check if room charges are properly calculated
+            $roomValidationQuery = $conn->prepare("
+                SELECT COUNT(*) as room_count
+                FROM tbl_booking_room br
+                WHERE br.booking_id = :booking_id AND br.roomnumber_id IS NOT NULL
+            ");
+            $roomValidationQuery->bindParam(':booking_id', $booking_id);
+            $roomValidationQuery->execute();
+            $roomCount = $roomValidationQuery->fetchColumn();
+
+            $result = [
+                "success" => true,
+                "pending_charges" => $pendingCount,
+                "assigned_rooms" => $roomCount,
+                "is_complete" => $pendingCount == 0, // Only check for pending charges, not room assignments
+                "message" => $pendingCount > 0 ? 
+                    "There are {$pendingCount} pending charges that need to be included in billing." :
+                    ($roomCount > 0 ? "Billing validation complete." : "Billing validation complete. Note: No rooms assigned yet.")
+            ];
+
+            echo json_encode($result);
+
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => "Error validating billing: " . $e->getMessage()
+            ]);
+        }
+    }
+
+    function calculateComprehensiveBilling($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+        $discount_id = $json["discount_id"] ?? null;
+        $vat_rate = $json["vat_rate"] ?? 0.12;
+        $downpayment = $json["downpayment"] ?? 0;
+
+        $result = $this->calculateComprehensiveBillingInternal($conn, $booking_id, $discount_id, $vat_rate, $downpayment);
+        echo json_encode($result);
+    }
+
+    function createBillingRecord($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+        $employee_id = $json["employee_id"] ?? 1;
+
+        try {
+            // Check if billing already exists
+            $checkStmt = $conn->prepare("SELECT billing_id FROM tbl_billing WHERE booking_id = :booking_id");
+            $checkStmt->bindParam(':booking_id', $booking_id);
+            $checkStmt->execute();
+            
+            if ($checkStmt->fetch()) {
+                echo json_encode(["success" => true, "message" => "Billing record already exists"]);
+                return;
+            }
+
+            // Create billing record
+            $stmt = $conn->prepare("
+                INSERT INTO tbl_billing (
+                    booking_id, employee_id, billing_dateandtime, 
+                    billing_invoice_number, billing_total_amount, billing_balance
+                ) VALUES (
+                    :booking_id, :employee_id, NOW(), 
+                    :invoice_number, 0, 0
+                )
+            ");
+            
+            $invoice_number = 'REF' . date('YmdHis') . rand(100, 999);
+            
+            $stmt->bindParam(':booking_id', $booking_id);
+            $stmt->bindParam(':employee_id', $employee_id);
+            $stmt->bindParam(':invoice_number', $invoice_number);
+            
+            if ($stmt->execute()) {
+                echo json_encode(["success" => true, "message" => "Billing record created successfully"]);
+            } else {
+                echo json_encode(["success" => false, "message" => "Failed to create billing record"]);
+            }
+            
+        } catch (Exception $e) {
+            echo json_encode(["success" => false, "message" => "Error: " . $e->getMessage()]);
+        }
+    }
+
+    function getBookingCharges($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+
+        try {
+            // Get room charges
+            $roomQuery = $conn->prepare("
+                SELECT 
+                    'Room Charges' AS charge_type,
+                    rt.roomtype_name AS charge_name,
+                    rt.roomtype_price AS unit_price,
+                    1 AS quantity,
+                    rt.roomtype_price AS total_amount,
+                    br.booking_room_id,
+                    'Room' AS category
+                FROM tbl_booking_room br
+                JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
+                WHERE br.booking_id = :booking_id
+            ");
+            $roomQuery->bindParam(':booking_id', $booking_id);
+            $roomQuery->execute();
+            $roomCharges = $roomQuery->fetchAll(PDO::FETCH_ASSOC);
+
+            // Get additional charges (amenities, services, damages)
+            $chargesQuery = $conn->prepare("
+                SELECT 
+                    'Additional Charges' AS charge_type,
+                    cm.charges_master_name AS charge_name,
+                    bc.booking_charges_price AS unit_price,
+                    bc.booking_charges_quantity AS quantity,
+                    (bc.booking_charges_price * bc.booking_charges_quantity) AS total_amount,
+                    bc.booking_room_id,
+                    cc.charges_category_name AS category,
+                    bc.booking_charges_id
+                FROM tbl_booking_charges bc
+                JOIN tbl_charges_master cm ON bc.charges_master_id = cm.charges_master_id
+                JOIN tbl_charges_category cc ON cm.charges_category_id = cc.charges_category_id
+                JOIN tbl_booking_room br ON bc.booking_room_id = br.booking_room_id
+                WHERE br.booking_id = :booking_id
+            ");
+            $chargesQuery->bindParam(':booking_id', $booking_id);
+            $chargesQuery->execute();
+            $additionalCharges = $chargesQuery->fetchAll(PDO::FETCH_ASSOC);
+
+            // Combine all charges
+            $allCharges = array_merge($roomCharges, $additionalCharges);
+
+            echo json_encode([
+                "success" => true,
+                "booking_id" => $booking_id,
+                "charges" => $allCharges,
+                "room_charges_count" => count($roomCharges),
+                "additional_charges_count" => count($additionalCharges),
+                "total_charges_count" => count($allCharges)
+            ]);
+
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => "Error fetching charges: " . $e->getMessage()
+            ]);
+        }
+    }
+
+    function addBookingCharge($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+        $charge_name = $json["charge_name"];
+        $charge_price = $json["charge_price"];
+        $quantity = $json["quantity"] ?? 1;
+        $category_id = $json["category_id"] ?? 4; // Default to "Additional Services"
+        $employee_id = $json["employee_id"] ?? 1;
+
+        try {
+            // Get the first booking room for this booking
+            $roomQuery = $conn->prepare("SELECT booking_room_id FROM tbl_booking_room WHERE booking_id = :booking_id LIMIT 1");
+            $roomQuery->bindParam(':booking_id', $booking_id);
+            $roomQuery->execute();
+            $roomData = $roomQuery->fetch(PDO::FETCH_ASSOC);
+
+            if (!$roomData) {
+                echo json_encode(["success" => false, "message" => "No room assigned to this booking"]);
+                return;
+            }
+
+            $booking_room_id = $roomData['booking_room_id'];
+
+            // Check if charge already exists in master table
+            $checkCharge = $conn->prepare("SELECT charges_master_id FROM tbl_charges_master WHERE charges_master_name = :charge_name");
+            $checkCharge->bindParam(':charge_name', $charge_name);
+            $checkCharge->execute();
+
+            $charges_master_id = null;
+            if ($checkCharge->rowCount() > 0) {
+                $charges_master_id = $checkCharge->fetchColumn();
+            } else {
+                // Create new charge in master table
+                $createCharge = $conn->prepare("
+                    INSERT INTO tbl_charges_master (charges_category_id, charges_master_name, charges_master_price, charges_master_description)
+                    VALUES (:category_id, :charge_name, :charge_price, 'Added by frontdesk')
+                ");
+                $createCharge->bindParam(':category_id', $category_id);
+                $createCharge->bindParam(':charge_name', $charge_name);
+                $createCharge->bindParam(':charge_price', $charge_price);
+                $createCharge->execute();
+                $charges_master_id = $conn->lastInsertId();
+            }
+
+            // Add charge to booking
+            $addCharge = $conn->prepare("
+                INSERT INTO tbl_booking_charges (booking_room_id, charges_master_id, booking_charges_price, booking_charges_quantity)
+                VALUES (:booking_room_id, :charges_master_id, :charge_price, :quantity)
+            ");
+            $addCharge->bindParam(':booking_room_id', $booking_room_id);
+            $addCharge->bindParam(':charges_master_id', $charges_master_id);
+            $addCharge->bindParam(':charge_price', $charge_price);
+            $addCharge->bindParam(':quantity', $quantity);
+            $addCharge->execute();
+
+            echo json_encode([
+                "success" => true,
+                "message" => "Charge added successfully",
+                "charge_id" => $conn->lastInsertId()
+            ]);
+
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => "Error adding charge: " . $e->getMessage()
+            ]);
+        }
+    }
+
+    function getDetailedBookingCharges($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+
+        try {
+            // Get detailed room charges with room information
+            $roomQuery = $conn->prepare("
+                SELECT 
+                    'Room Charges' AS charge_type,
+                    br.booking_room_id,
+                    rt.roomtype_name AS charge_name,
+                    rt.roomtype_price AS unit_price,
+                    1 AS quantity,
+                    rt.roomtype_price AS total_amount,
+                    rt.roomtype_description,
+                    rt.max_capacity,
+                    rt.roomtype_beds,
+                    rt.roomtype_sizes,
+                    br.bookingRoom_adult,
+                    br.bookingRoom_children,
+                    'Room' AS category,
+                    r.roomnumber_id,
+                    r.roomnumber_name
+                FROM tbl_booking_room br
+                JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
+                LEFT JOIN tbl_rooms r ON br.roomnumber_id = r.roomnumber_id
+                WHERE br.booking_id = :booking_id
+            ");
+            $roomQuery->bindParam(':booking_id', $booking_id);
+            $roomQuery->execute();
+            $roomCharges = $roomQuery->fetchAll(PDO::FETCH_ASSOC);
+
+            // Get detailed additional charges
+            $chargesQuery = $conn->prepare("
+                SELECT 
+                    'Additional Charges' AS charge_type,
+                    bc.booking_charges_id,
+                    bc.booking_room_id,
+                    cm.charges_master_name AS charge_name,
+                    bc.booking_charges_price AS unit_price,
+                    bc.booking_charges_quantity AS quantity,
+                    (bc.booking_charges_price * bc.booking_charges_quantity) AS total_amount,
+                    cc.charges_category_name AS category,
+                    cm.charges_master_description,
+                    rt.roomtype_name AS room_type,
+                    r.roomnumber_name AS room_number
+                FROM tbl_booking_charges bc
+                JOIN tbl_charges_master cm ON bc.charges_master_id = cm.charges_master_id
+                JOIN tbl_charges_category cc ON cm.charges_category_id = cc.charges_category_id
+                JOIN tbl_booking_room br ON bc.booking_room_id = br.booking_room_id
+                JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
+                LEFT JOIN tbl_rooms r ON br.roomnumber_id = r.roomnumber_id
+                WHERE br.booking_id = :booking_id
+                ORDER BY bc.booking_charges_id
+            ");
+            $chargesQuery->bindParam(':booking_id', $booking_id);
+            $chargesQuery->execute();
+            $additionalCharges = $chargesQuery->fetchAll(PDO::FETCH_ASSOC);
+
+            // Calculate totals
+            $room_total = array_sum(array_column($roomCharges, 'total_amount'));
+            $charges_total = array_sum(array_column($additionalCharges, 'total_amount'));
+            $grand_total = $room_total + $charges_total;
+
+            echo json_encode([
+                "success" => true,
+                "booking_id" => $booking_id,
+                "room_charges" => $roomCharges,
+                "additional_charges" => $additionalCharges,
+                "summary" => [
+                    "room_total" => $room_total,
+                    "charges_total" => $charges_total,
+                    "grand_total" => $grand_total,
+                    "room_count" => count($roomCharges),
+                    "charges_count" => count($additionalCharges)
+                ]
+            ]);
+
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => "Error fetching detailed charges: " . $e->getMessage()
+            ]);
+        }
     }
 
     function getBookingsWithBillingStatus()
@@ -427,12 +904,22 @@ class Transactions
             b.reference_no,
             b.booking_checkin_dateandtime,
             b.booking_checkout_dateandtime,
-            CONCAT(c.customers_fname, ' ', c.customers_lname) AS customer_name,
+            CASE 
+                WHEN c.customers_id IS NOT NULL THEN CONCAT(c.customers_fname, ' ', c.customers_lname)
+                WHEN w.customers_walk_in_id IS NOT NULL THEN CONCAT(w.customers_walk_in_fname, ' ', w.customers_walk_in_lname)
+                ELSE 'Unknown Customer'
+            END AS customer_name,
+            CASE 
+                WHEN c.customers_id IS NOT NULL THEN 'Online'
+                WHEN w.customers_walk_in_id IS NOT NULL THEN 'Walk-in'
+                ELSE 'Unknown'
+            END AS customer_type,
             bi.billing_id,
             i.invoice_id,
             i.invoice_status_id
         FROM tbl_booking b
         LEFT JOIN tbl_customers c ON b.customers_id = c.customers_id
+        LEFT JOIN tbl_customers_walk_in w ON b.customers_walk_in_id = w.customers_walk_in_id
         LEFT JOIN tbl_billing bi ON b.booking_id = bi.booking_id
         LEFT JOIN tbl_invoice i ON bi.billing_id = i.billing_id
         ORDER BY b.booking_created_at DESC
@@ -534,7 +1021,26 @@ switch ($operation) {
     case "getBookingInvoice":
         $transactions->getBookingInvoice($json);
         break;
+    case "validateBillingCompleteness":
+        $transactions->validateBillingCompleteness($json);
+        break;
+    case "calculateComprehensiveBilling":
+        $transactions->calculateComprehensiveBilling($json);
+        break;
+    case "createBillingRecord":
+        $transactions->createBillingRecord($json);
+        break;
+    case "getBookingCharges":
+        $transactions->getBookingCharges($json);
+        break;
+    case "addBookingCharge":
+        $transactions->addBookingCharge($json);
+        break;
+    case "getDetailedBookingCharges":
+        $transactions->getDetailedBookingCharges($json);
+        break;
     default:
         echo "Invalid Operation";
         break;
 }
+//pustahanay pata ma kaon ra nimo imo gisulti AAAHHAAHHAH
