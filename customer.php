@@ -1462,6 +1462,7 @@ class Demiren_customer
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
+
         $sql = "SELECT a.*, b.*, c.*, d.*, 
                f.booking_charges_id,
                f.booking_charges_quantity,
@@ -1471,8 +1472,8 @@ class Demiren_customer
                g.charges_master_price,
                h.charges_category_id,
                h.charges_category_name,
-               i.charges_status_name,
-               f.booking_charge_status
+               IFNULL(i.charges_status_name, 'Pending') AS charges_status_name,
+               IFNULL(f.booking_charge_status, 1) AS booking_charge_status
         FROM tbl_booking a
         INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
         INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
@@ -1483,8 +1484,7 @@ class Demiren_customer
         LEFT JOIN tbl_charges_status i ON i.charges_status_id = f.booking_charge_status
         WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
           AND :today BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
-        ORDER BY a.booking_created_at DESC
-        ";
+        ORDER BY a.booking_created_at DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':today', $today);
@@ -1539,7 +1539,9 @@ class Demiren_customer
                     "qty" => $row['booking_charges_quantity'],
                     "price" => $row['booking_charges_price'],
                     "category" => $row['charges_category_name'],
-                    "name" => $row['charges_master_name']
+                    "name" => $row['charges_master_name'],
+                    "status_id" => $row['booking_charge_status'],
+                    "status_name" => $row['charges_status_name']
                 ];
                 $bookings[$bookingId]['chargesTotal'] += $row['booking_charges_price'];
             }
@@ -1555,8 +1557,8 @@ class Demiren_customer
                             "charges_master_id" => $id,
                             "charges_master_name" => $c['name'],
                             "charges_category_name" => $c['category'],
-                            "charges_master_status_id" => $row['booking_charge_status'],
-                            "charges_status_name" => $row['charges_status_name'],
+                            "charges_master_status_id" => $c['status_id'],
+                            "charges_status_name" => $c['status_name'],
                             "booking_charges_quantity" => 0,
                             "booking_charges_price" => 0,
                             "total" => 0
@@ -1571,14 +1573,14 @@ class Demiren_customer
                 unset($room['charges_raw']);
             }
             $booking['roomsList'] = array_values($booking['roomsList']);
+            // Optional recompute:
             // $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
         }
 
-        // // Debug bookings result
-        // file_put_contents('debug_bookings.txt', print_r($bookings, true));
-
         return array_values($bookings);
     }
+
+
 
     function checkAndSendOTP($json)
     {
