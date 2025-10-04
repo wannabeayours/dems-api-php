@@ -365,6 +365,17 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
+                if ($room["bedCount"] > 0) {
+                    $bookingId = $conn->lastInsertId();
+                    $totalCharges = $room["bedCount"] * 400;
+                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
+                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
+                    $stmt = $conn->prepare($sql);
+                    $stmt->bindParam(":booking_room_id", $bookingId);
+                    $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
+                    $stmt->bindParam(":booking_charges_total", $totalCharges);
+                    $stmt->execute();
+                }
             }
 
             // ✅ Step 5: Insert booking history (keep from your original code)
@@ -616,12 +627,39 @@ class Demiren_customer
         include "connection.php";
         date_default_timezone_set('Asia/Manila');
         $json = json_decode($json, true);
-        $sql = "INSERT INTO tbl_booking_history (booking_id, status_id, updated_at) VALUES (:booking_id, 4, NOW())";
+
+        // 🔹 Get booking creation/check-in time
+        $sql = "SELECT booking_created_at 
+            FROM tbl_booking 
+            WHERE booking_id = :booking_id";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":booking_id", $json["booking_id"]);
         $stmt->execute();
+        $booking = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$booking) {
+            return 0; // booking not found
+        }
+
+        // 🔹 Compare current time with booking_created_at
+        $bookingTime = strtotime($booking["booking_created_at"]);
+        $currentTime = time();
+        $hoursDiff   = ($currentTime - $bookingTime) / 3600;
+
+        if ($hoursDiff >= 24) {
+            return -1; // ❌ Cannot cancel, booking is already 24+ hours old
+        }
+
+        // 🔹 Insert cancellation record
+        $sql = "INSERT INTO tbl_booking_history (booking_id, status_id, updated_at) 
+            VALUES (:booking_id, 3, NOW())"; // 3 = Cancelled (based on your tbl_booking_status)
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":booking_id", $json["booking_id"]);
+        $stmt->execute();
+
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
+
 
     function sendEmail($json)
     {
@@ -912,6 +950,7 @@ class Demiren_customer
                 b.max_capacity,
                 b.roomtype_image,
                 a.room_status_id AS status_id,
+                b.roomtype_maxbeds,
                 COUNT(a.roomnumber_id) AS available_count,
                 MIN(a.roomnumber_id) AS sample_room_id
             FROM tbl_roomtype b
@@ -1050,6 +1089,17 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
+                $bookingRoomId = $conn->lastInsertId();
+                if ($room["bedCount"] > 0) {
+                    $totalCharges = $room["bedCount"] * 400;
+                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
+                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
+                    $stmt = $conn->prepare($sql);
+                    $stmt->bindParam(":booking_room_id", $bookingRoomId);
+                    $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
+                    $stmt->bindParam(":booking_charges_total", $totalCharges);
+                    $stmt->execute();
+                }
             }
             $balance = $bookingDetails["totalAmount"] - $bookingDetails["totalPay"];
             $sql = "INSERT INTO tbl_billing(booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
