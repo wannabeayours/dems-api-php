@@ -1462,7 +1462,7 @@ class Demiren_customer
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
-
+        
         $sql = "SELECT a.*, b.*, c.*, d.*, 
                f.booking_charges_id,
                f.booking_charges_quantity,
