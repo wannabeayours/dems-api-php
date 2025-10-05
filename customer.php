@@ -1462,7 +1462,7 @@ class Demiren_customer
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
-        
+
         $sql = "SELECT a.*, b.*, c.*, d.*, 
                f.booking_charges_id,
                f.booking_charges_quantity,
@@ -1541,7 +1541,8 @@ class Demiren_customer
                     "category" => $row['charges_category_name'],
                     "name" => $row['charges_master_name'],
                     "status_id" => $row['booking_charge_status'],
-                    "status_name" => $row['charges_status_name']
+                    "status_name" => $row['charges_status_name'],
+                    "booking_charges_id" => $row['booking_charges_id']
                 ];
                 $bookings[$bookingId]['chargesTotal'] += $row['booking_charges_price'];
             }
@@ -1559,6 +1560,7 @@ class Demiren_customer
                             "charges_category_name" => $c['category'],
                             "charges_master_status_id" => $c['status_id'],
                             "charges_status_name" => $c['status_name'],
+                            "booking_charges_id" => $c['booking_charges_id'],
                             "booking_charges_quantity" => 0,
                             "booking_charges_price" => 0,
                             "total" => 0
@@ -1620,36 +1622,9 @@ class Demiren_customer
                     "message" => "Email already exists in online accounts."
                 ]);
             }
-
-            // 3. Generate OTP (6-digit)
-            $otp = str_pad(rand(0, 999999), 6, "0", STR_PAD_LEFT);
-
-            // 4. Expiration time (5 minutes from now)
-            $expiration = date("Y-m-d H:i:s", strtotime("+5 minutes"));
-
-            // 5. Clean expired OTPs
-            $stmt = $conn->prepare("
-            DELETE FROM tbl_customer_otp 
-            WHERE guest_email = :email 
-              AND expiration_date < NOW()
-        ");
-            $stmt->bindParam(":email", $data["guest_email"]);
-            $stmt->execute();
-
-            // 6. Insert new OTP
-            $stmt = $conn->prepare("INSERT INTO tbl_customer_otp 
-                                        (guest_email, otp_code, expiration_date, attempts, locked_until)
-                                    VALUES 
-                                        (:email, :otp, :expiration, 0, NULL)");
-            $stmt->bindParam(":email", $data["guest_email"]);
-            $stmt->bindParam(":otp", $otp);
-            $stmt->bindParam(":expiration", $expiration);
-            $stmt->execute();
-
             return json_encode([
                 "success" => true,
                 "message" => "OTP generated successfully.",
-                "otp" => $otp // ⚠️ return only for testing, remove later when email sending is ready
             ]);
         } catch (PDOException $e) {
             return json_encode([
@@ -1767,6 +1742,46 @@ class Demiren_customer
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
     }
+
+    function cancelReqAmenities($json)
+    {
+        include "connection.php";
+        date_default_timezone_set('Asia/Manila');
+        $data = json_decode($json, true);
+
+        // 🔹 Step 1: Get the request date/time
+        $sql = "SELECT booking_charge_date 
+            FROM tbl_booking_charges 
+            WHERE booking_charges_id = :bookingChargesId";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":bookingChargesId", $data["bookingChargesId"]);
+        $stmt->execute();
+        $charge = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$charge) {
+            return 0; // ❌ Request not found
+        }
+
+        // 🔹 Step 2: Check if more than 10 minutes have passed
+        $requestTime = strtotime($charge["booking_charge_date"]);
+        $currentTime = time();
+        $minutesDiff = ($currentTime - $requestTime) / 60;
+
+        if ($minutesDiff > 10) {
+            // ❌ Too late to cancel
+            return -1;
+        }
+
+        // 🔹 Step 3: Proceed with cancellation
+        $sql = "UPDATE tbl_booking_charges 
+            SET booking_charge_status = 3 
+            WHERE booking_charges_id = :bookingChargesId";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":bookingChargesId", $data["bookingChargesId"]);
+        $stmt->execute();
+
+        return $stmt->rowCount() > 0 ? 1 : 0;
+    }
 } //customer
 
 
@@ -1880,6 +1895,9 @@ switch ($operation) {
         break;
     case "getCustomerLogs":
         echo json_encode($demiren_customer->getCustomerLogs($json));
+        break;
+    case "cancelReqAmenities":
+        echo json_encode($demiren_customer->cancelReqAmenities($json));
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
