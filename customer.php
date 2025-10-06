@@ -274,7 +274,7 @@ class Demiren_customer
         try {
             $conn->beginTransaction();
 
-            // ✅ Step 1: Insert walk-in customer (keep your existing form fields)
+            // ✅ Step 1: Insert walk-in customer
             $stmt = $conn->prepare("
             INSERT INTO tbl_customers_walk_in 
                 (customers_walk_in_fname, customers_walk_in_lname, customers_walk_in_email, customers_walk_in_phone, customers_walk_in_created_at, customers_walk_in_status)
@@ -296,7 +296,7 @@ class Demiren_customer
             $checkIn = $bookingDetails["checkIn"];
             $checkOut = $bookingDetails["checkOut"];
 
-            // ✅ Step 3: Insert booking (same as with-account but with walk-in customer ID)
+            // ✅ Step 3: Insert booking
             $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
@@ -318,10 +318,11 @@ class Demiren_customer
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
-            // ✅ Step 4: For each room requested, assign an available physical room (same logic as with-account)
+            // ✅ Step 4: Assign available rooms and handle charges
             foreach ($roomDetails as $room) {
                 $roomTypeId = $room["roomTypeId"];
 
+                // Find available room for this type and date range
                 $availabilityStmt = $conn->prepare("
                 SELECT r.roomnumber_id
                 FROM tbl_rooms r
@@ -355,9 +356,11 @@ class Demiren_customer
 
                 $selectedRoomNumberId = $availableRoom['roomnumber_id'];
 
-                // ✅ Insert booking room row (with adult/children counts like with-account)
-                $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
-                    VALUES (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
+                // Insert booking room
+                $sql = "INSERT INTO tbl_booking_room 
+                (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
+                VALUES 
+                (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bindParam(":booking_id", $bookingId);
                 $stmt->bindParam(":roomtype_id", $roomTypeId);
@@ -365,27 +368,36 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
-                if ($room["bedCount"] > 0) {
-                    $bookingId = $conn->lastInsertId();
+                $bookingRoomId = $conn->lastInsertId(); // ✅ Keep this separate
+
+                // Add extra bed charge if applicable
+                if (isset($room["bedCount"]) && $room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
-                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
+                    $sql = "INSERT INTO tbl_booking_charges
+                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
                     VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
                     $stmt = $conn->prepare($sql);
-                    $stmt->bindParam(":booking_room_id", $bookingId);
+                    $stmt->bindParam(":booking_room_id", $bookingRoomId);
                     $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
                     $stmt->bindParam(":booking_charges_total", $totalCharges);
                     $stmt->execute();
                 }
             }
 
-            // ✅ Step 5: Insert booking history (keep from your original code)
-            $sql = "INSERT INTO tbl_booking_history(booking_id, employee_id, status_id, updated_at) VALUES (:booking_id, NULL, 1, NOW())";
+            // ✅ Step 5: Booking history (Pending)
+            $sql = "INSERT INTO tbl_booking_history
+            (booking_id, employee_id, status_id, updated_at) 
+            VALUES 
+            (:booking_id, NULL, 1, NOW())";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->execute();
 
-            $sql = "INSERT INTO tbl_billing(booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
-                VALUES (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
+            // ✅ Step 6: Billing record
+            $sql = "INSERT INTO tbl_billing
+            (booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
+            VALUES 
+            (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->bindParam(":payment_method_id", $bookingDetails["payment_method_id"]);
@@ -714,6 +726,7 @@ class Demiren_customer
         return $sendEmail->sendEmail($emailTo, $emailSubject, $emailBody);
     }
 
+    
     function getNationality()
     {
         include "connection.php";
