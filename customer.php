@@ -266,7 +266,7 @@ class Demiren_customer
     }
 
     // New Method
-    function customerBookingNoAccount($json)
+  function customerBookingNoAccount($json)
     {
         include "connection.php";
         $json = json_decode($json, true);
@@ -274,7 +274,7 @@ class Demiren_customer
         try {
             $conn->beginTransaction();
 
-            // ✅ Step 1: Insert walk-in customer
+            // ✅ Step 1: Insert walk-in customer (keep your existing form fields)
             $stmt = $conn->prepare("
             INSERT INTO tbl_customers_walk_in 
                 (customers_walk_in_fname, customers_walk_in_lname, customers_walk_in_email, customers_walk_in_phone, customers_walk_in_created_at, customers_walk_in_status)
@@ -296,7 +296,7 @@ class Demiren_customer
             $checkIn = $bookingDetails["checkIn"];
             $checkOut = $bookingDetails["checkOut"];
 
-            // ✅ Step 3: Insert booking
+            // ✅ Step 3: Insert booking (same as with-account but with walk-in customer ID)
             $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
@@ -318,11 +318,10 @@ class Demiren_customer
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
-            // ✅ Step 4: Assign available rooms and handle charges
+            // ✅ Step 4: For each room requested, assign an available physical room (same logic as with-account)
             foreach ($roomDetails as $room) {
                 $roomTypeId = $room["roomTypeId"];
 
-                // Find available room for this type and date range
                 $availabilityStmt = $conn->prepare("
                 SELECT r.roomnumber_id
                 FROM tbl_rooms r
@@ -356,11 +355,9 @@ class Demiren_customer
 
                 $selectedRoomNumberId = $availableRoom['roomnumber_id'];
 
-                // Insert booking room
-                $sql = "INSERT INTO tbl_booking_room 
-                (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
-                VALUES 
-                (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
+                // ✅ Insert booking room row (with adult/children counts like with-account)
+                $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
+                    VALUES (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bindParam(":booking_id", $bookingId);
                 $stmt->bindParam(":roomtype_id", $roomTypeId);
@@ -368,14 +365,25 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
-                $bookingRoomId = $conn->lastInsertId(); // ✅ Keep this separate
-
-                // Add extra bed charge if applicable
-                if (isset($room["bedCount"]) && $room["bedCount"] > 0) {
+                // capture the just-inserted booking_room_id
+                $bookingRoomId = $conn->lastInsertId();
+                if ($room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
-                    $sql = "INSERT INTO tbl_booking_charges
-                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
-                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
+                    $sql = "INSERT INTO tbl_booking_charges(
+                                charges_master_id,
+                                booking_room_id,
+                                booking_charges_price,
+                                booking_charges_quantity,
+                                booking_charges_total,
+                                charges_status_id
+                            ) VALUES (
+                                2,
+                                :booking_room_id,
+                                400,
+                                :booking_charges_quantity,
+                                :booking_charges_total,
+                                1
+                            )"; // 1 = Pending per tbl_charges_status
                     $stmt = $conn->prepare($sql);
                     $stmt->bindParam(":booking_room_id", $bookingRoomId);
                     $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
@@ -384,20 +392,14 @@ class Demiren_customer
                 }
             }
 
-            // ✅ Step 5: Booking history (Pending)
-            $sql = "INSERT INTO tbl_booking_history
-            (booking_id, employee_id, status_id, updated_at) 
-            VALUES 
-            (:booking_id, NULL, 1, NOW())";
+            // ✅ Step 5: Insert booking history (keep from your original code)
+            $sql = "INSERT INTO tbl_booking_history(booking_id, employee_id, status_id, updated_at) VALUES (:booking_id, NULL, 1, NOW())";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->execute();
 
-            // ✅ Step 6: Billing record
-            $sql = "INSERT INTO tbl_billing
-            (booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
-            VALUES 
-            (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
+            $sql = "INSERT INTO tbl_billing(booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
+                VALUES (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->bindParam(":payment_method_id", $bookingDetails["payment_method_id"]);
@@ -408,14 +410,102 @@ class Demiren_customer
             $stmt->execute();
 
             $conn->commit();
+            
+            // ✅ Step 6: Send email notification to customer
+            try {
+                include_once 'send_email.php';
+                $emailSender = new SendEmail();
+                
+                // Prepare email content
+                $customerName = $json["walkinfirstname"] . " " . $json["walkinlastname"];
+                $customerEmail = $json["email"];
+                
+                $emailSubject = "Booking Confirmation - Reference #" . $referenceNo;
+                
+                $emailBody = "
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background-color: #113F67; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                        .content { background-color: #f9f9f9; padding: 20px; border-radius: 0 0 8px 8px; }
+                        .booking-details { background-color: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #113F67; }
+                        .status-pending { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 15px 0; }
+                        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+                        .highlight { color: #113F67; font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class='container'>
+                        <div class='header'>
+                            <h1>🏨 Demiren Hotel & Restaurant</h1>
+                            <p>Booking Confirmation</p>
+                        </div>
+                        
+                        <div class='content'>
+                            <p>Dear <strong>" . htmlspecialchars($customerName) . "</strong>,</p>
+                            
+                            <p>Thank you for choosing Demiren Hotel & Restaurant for your upcoming stay!</p>
+                            
+                            <div class='booking-details'>
+                                <h3>📋 Booking Details</h3>
+                                <p><strong>Reference Number:</strong> <span class='highlight'>" . $referenceNo . "</span></p>
+                                <p><strong>Check-in Date:</strong> " . date('F j, Y', strtotime($checkIn)) . "</p>
+                                <p><strong>Check-out Date:</strong> " . date('F j, Y', strtotime($checkOut)) . "</p>
+                                <p><strong>Total Guests:</strong> " . $totalGuests . "</p>
+                                <p><strong>Total Amount:</strong> ₱" . number_format($bookingDetails["totalAmount"], 2) . "</p>
+                                <p><strong>Down Payment:</strong> ₱" . number_format($bookingDetails["downpayment"], 2) . "</p>
+                            </div>
+                            
+                            <div class='status-pending'>
+                                <h4>⏳ Booking Status: Pending Approval</h4>
+                                <p>Your booking request has been received and is currently being reviewed by our team.</p>
+                                <p><strong>Please wait for our confirmation email</strong> which will be sent within 24 hours.</p>
+                            </div>
+                            
+                            <h4>📞 Contact Information</h4>
+                            <p>If you have any questions or need to make changes to your booking, please contact us:</p>
+                            <ul>
+                                <li>📧 Email: reservations@demirenhotel.com</li>
+                                <li>📞 Phone: (02) 123-4567</li>
+                                <li>🏨 Address: Demiren Hotel & Restaurant</li>
+                            </ul>
+                            
+                            <p>We look forward to welcoming you to Demiren Hotel & Restaurant!</p>
+                            
+                            <p>Best regards,<br>
+                            <strong>Demiren Hotel & Restaurant Team</strong></p>
+                        </div>
+                        
+                        <div class='footer'>
+                            <p>This is an automated message. Please do not reply to this email.</p>
+                            <p>© 2024 Demiren Hotel & Restaurant. All rights reserved.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>";
+                
+                // Send the email
+                $emailSent = $emailSender->sendEmail($customerEmail, $emailSubject, $emailBody);
+                
+                if ($emailSent) {
+                    error_log("Booking confirmation email sent successfully to: " . $customerEmail . " for booking: " . $referenceNo);
+                } else {
+                    error_log("Failed to send booking confirmation email to: " . $customerEmail . " for booking: " . $referenceNo);
+                }
+                
+            } catch (Exception $emailError) {
+                // Log email error but don't fail the booking process
+                error_log("Email notification error for booking " . $referenceNo . ": " . $emailError->getMessage());
+            }
+            
             return 1;
         } catch (PDOException $e) {
             $conn->rollBack();
             return $e->getMessage();
         }
     }
-
-
 
     // Old Method
     // function customerBookingNoAccount($json)
@@ -726,7 +816,7 @@ class Demiren_customer
         return $sendEmail->sendEmail($emailTo, $emailSubject, $emailBody);
     }
 
-    
+
     function getNationality()
     {
         include "connection.php";
@@ -793,7 +883,7 @@ class Demiren_customer
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
     }
-    function customerRegistration($json)
+     function customerRegistration($json)
     {
         include "connection.php";
         $json = json_decode($json, true);
@@ -801,68 +891,72 @@ class Demiren_customer
         try {
             $conn->beginTransaction();
 
+            // Map form data to database fields
+            $username = $json['username'];
+            $password = password_hash($json['password'], PASSWORD_DEFAULT); // Encrypt password
+            $email = $json['email'];
+            $phone = $json['phone'];
+            $firstName = $json['firstName'];
+            $lastName = $json['lastName'];
+            $nationality = $json['nationality'];
+            $dob = $json['dob'];
 
+            // Insert into tbl_customers_online only
             $stmt = $conn->prepare("
                 INSERT INTO tbl_customers_online (
                     customers_online_username, 
                     customers_online_password, 
-                    customers_online_profile_image,
-                    customers_online_authentication_status
+                    customers_online_email,
+                    customers_online_phone,
+                    customers_online_created_at,
+                    customers_online_status
                 ) VALUES (
                     :customers_online_username, 
                     :customers_online_password, 
-                    :customers_online_profile_image,
-                    0
+                    :customers_online_email,
+                    :customers_online_phone,
+                    NOW(),
+                    'pending'
                 )
             ");
-            $stmt->bindParam(':customers_online_username', $json['customers_online_username']);
-            $stmt->bindParam(':customers_online_password', $json['customers_online_password']);
-            $stmt->bindParam(':customers_online_profile_image', $json['customers_online_profile_image']);
+            $stmt->bindParam(':customers_online_username', $username);
+            $stmt->bindParam(':customers_online_password', $password);
+            $stmt->bindParam(':customers_online_email', $email);
+            $stmt->bindParam(':customers_online_phone', $phone);
             $stmt->execute();
             $customers_online_id = $conn->lastInsertId();
 
-
-            $stmt = $conn->prepare("
-                INSERT INTO tbl_customer_identification (
-                    customer_identification_attachment_filename
-                ) VALUES (
-                    :customer_identification_attachment_filename
-                )
-            ");
-            $stmt->bindParam(':customer_identification_attachment_filename', $json['customer_identification_attachment_filename']);
-            $stmt->execute();
-            $identification_id = $conn->lastInsertId();
-
-
+            // Insert into tbl_customers with reference to online account
             $stmt = $conn->prepare("
                 INSERT INTO tbl_customers (
                     nationality_id,
-                    identification_id,
                     customers_online_id,
                     customers_fname,
                     customers_lname,
                     customers_email,
                     customers_phone,
-                    customers_birthdate
+                    customers_birthdate,
+                    customers_created_at,
+                    customers_status
                 ) VALUES (
                     :nationality_id,
-                    :identification_id,
                     :customers_online_id,
                     :customers_fname,
                     :customers_lname,
                     :customers_email,
-                    :customers_phone_number,
-                    :customers_date_of_birth
+                    :customers_phone,
+                    :customers_birthdate,
+                    NOW(),
+                    'pending'
                 )
             ");
-            $stmt->bindParam(':nationality_id', $json['nationality_id']);
-            $stmt->bindParam(':identification_id', $identification_id);
+            $stmt->bindParam(':nationality_id', $nationality);
             $stmt->bindParam(':customers_online_id', $customers_online_id);
-            $stmt->bindParam(':customers_fname', $json['customers_fname']);
-            $stmt->bindParam(':customers_lname', $json['customers_lname']);
-            $stmt->bindParam(':customers_email', $json['customers_email']);
-            $stmt->bindParam(':customers_phone_number', $json['customers_phone_number']);
-            $stmt->bindParam(':customers_date_of_birth', $json['customers_date_of_birth']);
+            $stmt->bindParam(':customers_fname', $firstName);
+            $stmt->bindParam(':customers_lname', $lastName);
+            $stmt->bindParam(':customers_email', $email);
+            $stmt->bindParam(':customers_phone', $phone);
+            $stmt->bindParam(':customers_birthdate', $dob);
             $stmt->execute();
 
             $conn->commit();
@@ -1238,7 +1332,8 @@ class Demiren_customer
         $json = json_decode($json, true);
 
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
-        $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
+        $sql = "SELECT a.*, b.*, c.*, d.*, 
+            IFNULL(f.booking_status_name, 'Pending') AS booking_status_name
             FROM tbl_booking a
             LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
             LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
@@ -1438,34 +1533,119 @@ class Demiren_customer
         // {"username":"sabils","password":"sabils"}
         include "connection.php";
         $data = json_decode($json, true);
-        $sql = "SELECT a.customers_online_id, a.customers_online_profile_image, b.*
+
+        // First, try to find user in tbl_customers_online (Customer login)
+        $sql = "SELECT a.customers_online_id, a.customers_online_password, b.*
         FROM tbl_customers_online a 
         INNER JOIN tbl_customers b ON b.customers_online_id = a.customers_online_id
-        WHERE a.customers_online_username = :customers_online_username AND BINARY a.customers_online_password = :customers_online_password";
+        WHERE a.customers_online_username = :customers_online_username";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":customers_online_username", $data["username"]);
-        $stmt->bindParam(":customers_online_password", $data["password"]);
         $stmt->execute();
-        return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
 
-        // $customer = $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
-        // if($customer == 0){
-        //     return $this->employeeLogin($json);
-        // }else{
-        //     return $customer;
-        // }
-    }
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    function employeeLogin($json)
-    {
-        include "connection.php";
-        $data = json_decode($json, true);
-        $sql = " SELECT * FROM tbl_employee WHERE employee_username = :employee_username AND BINARY employee_password = :employee_password";
+        if ($user) {
+            $storedPassword = $user["customers_online_password"];
+            $inputPassword = $data["password"];
+
+            // Check if the stored password is hashed (starts with $2y$)
+            if (password_get_info($storedPassword)['algo'] !== null) {
+                // Password is hashed, use password_verify
+                if (password_verify($inputPassword, $storedPassword)) {
+                    // Remove password from returned data for security
+                    unset($user["customers_online_password"]);
+                    return [
+                        "success" => true,
+                        "user" => $user,
+                        "user_type" => "customer"
+                    ];
+                }
+            } else {
+                // Password is plain text (legacy), compare directly
+                if ($inputPassword === $storedPassword) {
+                    // Remove password from returned data for security
+                    unset($user["customers_online_password"]);
+                    return [
+                        "success" => true,
+                        "user" => $user,
+                        "user_type" => "customer"
+                    ];
+                }
+            }
+        }
+
+        // If not found in customers, try to find in tbl_employee (Employee/Admin login)
+        $sql = "SELECT e.*, ul.userlevel_name 
+                FROM tbl_employee e 
+                LEFT JOIN tbl_user_level ul ON e.employee_user_level_id = ul.userlevel_id 
+                WHERE e.employee_username = :employee_username AND (e.employee_status = 'Active' OR e.employee_status = 'Offline')";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":employee_username", $data["username"]);
-        $stmt->bindParam(":employee_password", $data["password"]);
         $stmt->execute();
-        return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
+
+        $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($employee) {
+            $storedPassword = $employee["employee_password"];
+            $inputPassword = $data["password"];
+
+            // Check if the stored password is hashed (starts with $2y$)
+            if (password_get_info($storedPassword)['algo'] !== null) {
+                // Password is hashed, use password_verify
+                if (password_verify($inputPassword, $storedPassword)) {
+                    // Update employee status to 'Active' when logging in
+                    $updateSql = "UPDATE tbl_employee SET employee_status = 'Active', employee_updated_at = NOW() WHERE employee_id = :employee_id";
+                    $updateStmt = $conn->prepare($updateSql);
+                    $updateStmt->bindParam(":employee_id", $employee["employee_id"]);
+                    $updateStmt->execute();
+
+                    // Remove password from returned data for security
+                    unset($employee["employee_password"]);
+                    return [
+                        "success" => true,
+                        "user" => $employee,
+                        "user_type" => $employee["userlevel_name"] === "Admin" ? "admin" : "employee"
+                    ];
+                }
+            } else {
+                // Password is plain text (legacy), compare directly
+                if ($inputPassword === $storedPassword) {
+                    // Update employee status to 'Active' when logging in
+                    $updateSql = "UPDATE tbl_employee SET employee_status = 'Active', employee_updated_at = NOW() WHERE employee_id = :employee_id";
+                    $updateStmt = $conn->prepare($updateSql);
+                    $updateStmt->bindParam(":employee_id", $employee["employee_id"]);
+                    $updateStmt->execute();
+
+                    // Remove password from returned data for security
+                    unset($employee["employee_password"]);
+                    return [
+                        "success" => true,
+                        "user" => $employee,
+                        "user_type" => $employee["userlevel_name"] === "Admin" ? "admin" : "employee"
+                    ];
+                }
+            }
+        }
+
+        // Check if username exists in customers_online table but no online account
+        $checkCustomerSql = "SELECT customers_online_id FROM tbl_customers_online WHERE customers_online_username = :username";
+        $checkCustomerStmt = $conn->prepare($checkCustomerSql);
+        $checkCustomerStmt->bindParam(":username", $data["username"]);
+        $checkCustomerStmt->execute();
+        $existingCustomer = $checkCustomerStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existingCustomer) {
+            return [
+                "success" => false,
+                "message" => "User does not exist, Please Register first"
+            ];
+        }
+
+        return [
+            "success" => false,
+            "message" => "Invalid username or password"
+        ];
     }
 
     function getBookingSummary($json)
@@ -1476,7 +1656,7 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
 
-        $sql = "SELECT a.*, b.*, c.*, d.*, 
+        $sql = "SELECT a.*, b.*, c.*, d.*,
                f.booking_charges_id,
                f.booking_charges_quantity,
                f.booking_charges_price,
@@ -1494,7 +1674,7 @@ class Demiren_customer
         LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
         LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
         LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-        LEFT JOIN tbl_charges_status i ON i.charges_status_id = f.booking_charge_status
+        LEFT JOIN tbl_charges_status i ON i.booking_charge_status = f.booking_charge_status
         WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
           AND :today BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
         ORDER BY a.booking_created_at DESC";
@@ -1597,9 +1777,10 @@ class Demiren_customer
 
 
 
-    function checkAndSendOTP($json)
+        function checkAndSendOTP($json)
     {
         include "connection.php";
+        include "send_email.php";
         $data = json_decode($json, true);
 
         try {
@@ -1623,7 +1804,7 @@ class Demiren_customer
             // 2. Also check tbl_customers_online (in case of direct registration record)
             $sql = "SELECT customers_online_id 
                     FROM tbl_customers_online 
-                    WHERE customers_online_username = :email 
+                    WHERE customers_online_email = :email 
                     LIMIT 1";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":email", $data["guest_email"]);
@@ -1635,14 +1816,84 @@ class Demiren_customer
                     "message" => "Email already exists in online accounts."
                 ]);
             }
-            return json_encode([
-                "success" => true,
-                "message" => "OTP generated successfully.",
-            ]);
+
+            // 3. Get OTP from frontend
+            $otp = $data["otp_code"];
+
+            // 4. Send email with OTP
+            $emailTo = $data["guest_email"];
+            $emailSubject = "Demiren Hotel - Registration OTP";
+            $emailBody = '
+            <html>
+            <head>
+            <style>
+                body { font-family: Arial, sans-serif; color: #333; background-color: #f9f9f9; padding: 20px; }
+                .container { background-color: #fff; border-radius: 10px; padding: 30px; max-width: 600px; margin: auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                h2 { color: #1a73e8; text-align: center; }
+                .otp-code { font-size: 32px; font-weight: bold; color: #1a73e8; background: #f0f8ff; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0; letter-spacing: 5px; }
+                .info { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0; }
+                .footer { font-size: 12px; color: #777; margin-top: 30px; text-align: center; }
+            </style>
+            </head>
+            <body>
+            <div class="container">
+                <h2>Registration Verification</h2>
+                <p>Thank you for registering with <strong>Demiren Hotel & Restaurant</strong>.</p>
+                <p>Please use the following OTP code to complete your registration:</p>
+                
+                <div class="otp-code">' . $otp . '</div>
+                
+                <div class="info">
+                    <p><strong>Important:</strong></p>
+                    <ul>
+                        <li>This OTP is valid for 5 minutes only</li>
+                        <li>Do not share this code with anyone</li>
+                        <li>If you did not request this registration, please ignore this email</li>
+                    </ul>
+                </div>
+                
+                <p>If you have any questions, please contact our support team.</p>
+                
+                <div class="footer">
+                    This is an automated message from Demiren Hotel & Restaurant.<br>
+                    Please do not reply to this email.
+                </div>
+            </div>
+            </body>
+            </html>';
+
+            // Use the existing sendEmail function
+            $sendEmail = new SendEmail();
+            $emailResult = $sendEmail->sendEmail($emailTo, $emailSubject, $emailBody);
+
+            if ($emailResult === true) {
+                // Log successful OTP sending
+                error_log("OTP sent successfully to: " . $emailTo);
+                return json_encode([
+                    "success" => true,
+                    "message" => "OTP sent successfully to your email."
+                ]);
+            } else {
+                // Log failed OTP sending with more details
+                error_log("Failed to send OTP to: " . $emailTo);
+                error_log("Email result: " . print_r($emailResult, true));
+                error_log("OTP code: " . $otp);
+                error_log("Email subject: " . $emailSubject);
+                
+                return json_encode([
+                    "success" => false,
+                    "message" => "Failed to send OTP email. Please check your email address and try again."
+                ]);
+            }
         } catch (PDOException $e) {
             return json_encode([
                 "success" => false,
-                "message" => $e->getMessage()
+                "message" => "Database error: " . $e->getMessage()
+            ]);
+        } catch (Exception $e) {
+            return json_encode([
+                "success" => false,
+                "message" => "Error: " . $e->getMessage()
             ]);
         }
     }
@@ -1795,6 +2046,45 @@ class Demiren_customer
 
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
+    //     function getRoomImages($json) {
+    //     try {     
+    //         include "connection.php";
+    //         $stmt = $pdo->prepare("
+    //             SELECT 
+    //                 rt.roomtype_id,
+    //                 rt.roomtype_name,
+    //                 GROUP_CONCAT(img.imagesroommaster_filename ORDER BY img.imagesroommaster_id ASC) as image_filenames,
+    //                 COUNT(img.imagesroommaster_id) as image_count
+    //             FROM tbl_roomtype rt
+    //             LEFT JOIN tbl_imagesroommaster img ON rt.roomtype_id = img.roomtype_id
+    //             WHERE img.imagesroommaster_filename IS NOT NULL
+    //             GROUP BY rt.roomtype_id, rt.roomtype_name
+    //             ORDER BY rt.roomtype_id ASC
+    //         ");
+
+    //         $stmt->execute();
+    //         $rowCount = $stmt->rowCount();
+
+    //         if ($rowCount > 0) {
+    //             $result = array();
+    //             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    //                 $images = explode(',', $row['image_filenames']);
+    //                 $result[] = array(
+    //                     'roomtype_id' => $row['roomtype_id'],
+    //                     'roomtype_name' => $row['roomtype_name'],
+    //                     'images' => $images,
+    //                     'image_count' => $row['image_count']
+    //                 );
+    //             }
+    //             return json_encode($result);
+    //         } else {
+    //             return 0;
+    //         }
+
+    //     } catch(PDOException $e) {
+    //         return 0;
+    //     }
+    // }
 } //customer
 
 
@@ -1912,6 +2202,9 @@ switch ($operation) {
     case "cancelReqAmenities":
         echo json_encode($demiren_customer->cancelReqAmenities($json));
         break;
+    // case "getRoomImages":
+    //     echo json_encode($demiren_customer->getRoomImages($json));
+    //     break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;

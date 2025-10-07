@@ -22,8 +22,8 @@ class Send_to_Email
 
         try {
             $mailer_host = "smtp.gmail.com";
-            $mailer_user = "ikversoza@gmail.com";
-            $mailer_password = "cjgomhdwaxdchlox";
+            $mailer_user = "beyasabellach@gmail.com";
+            $mailer_password = "fycbvettqtxryhli";
             $mailer_port = 465;
 
             // Server settings
