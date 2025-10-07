@@ -3648,6 +3648,112 @@ class Admin_Functions
             ]);
         }
     }
+
+    function sendCheckInEmail($data)
+    {
+        include "connection.php";
+        include "send_email.php";
+
+        try {
+            // Get booking details
+            $bookingId = $data['booking_id'];
+            
+            $sql = "SELECT 
+                        b.booking_id,
+                        b.reference_no as booking_reference_number,
+                        b.booking_checkin_dateandtime,
+                        b.booking_checkout_dateandtime,
+                        b.booking_totalAmount,
+                        c.customers_fname,
+                        c.customers_lname,
+                        c.customers_email as customer_email,
+                        rt.roomtype_name as room_type_name
+                    FROM tbl_booking b
+                    JOIN tbl_customers c ON b.customers_id = c.customers_id
+                    JOIN tbl_booking_room br ON b.booking_id = br.booking_id
+                    JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
+                    WHERE b.booking_id = :booking_id";
+            
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(':booking_id', $bookingId);
+            $stmt->execute();
+            
+            $booking = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$booking) {
+                return [
+                    'success' => false,
+                    'message' => 'Booking not found'
+                ];
+            }
+
+            // Prepare email content
+            $customerName = $booking['customers_fname'] . ' ' . $booking['customers_lname'];
+            $subject = "Booking Approved - Check-In Confirmation";
+            
+            $emailBody = "
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; }
+                    .content { padding: 20px; background-color: #f9f9f9; }
+                    .booking-details { background-color: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
+                    .footer { text-align: center; padding: 20px; color: #666; }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h1>Booking Approved!</h1>
+                    </div>
+                    <div class='content'>
+                        <p>Dear {$customerName},</p>
+                        <p>Great news! Your booking request has been approved and you are now checked in.</p>
+                        
+                        <div class='booking-details'>
+                            <h3>Booking Details:</h3>
+                            <p><strong>Reference Number:</strong> {$booking['booking_reference_number']}</p>
+                            <p><strong>Room Type:</strong> {$booking['room_type_name']}</p>
+                            <p><strong>Check-in Date:</strong> " . date('Y-m-d', strtotime($booking['booking_checkin_dateandtime'])) . "</p>
+                            <p><strong>Check-out Date:</strong> " . date('Y-m-d', strtotime($booking['booking_checkout_dateandtime'])) . "</p>
+                            <p><strong>Total Amount:</strong> ₱" . number_format($booking['booking_totalAmount'], 2) . "</p>
+                        </div>
+                        
+                        <p>We look forward to providing you with an excellent stay experience!</p>
+                        <p>If you have any questions, please don't hesitate to contact us.</p>
+                    </div>
+                    <div class='footer'>
+                        <p>Thank you for choosing our hotel!</p>
+                    </div>
+                </div>
+            </body>
+            </html>";
+
+            // Send email
+            $emailSender = new SendEmail();
+            $emailResult = $emailSender->sendEmail($booking['customer_email'], $subject, $emailBody);
+
+            if ($emailResult) {
+                return [
+                    'success' => true,
+                    'message' => 'Check-in email sent successfully'
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'message' => 'Failed to send check-in email'
+                ];
+            }
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Error sending check-in email: ' . $e->getMessage()
+            ];
+        }
+    }
 }
 
 
@@ -3964,6 +4070,10 @@ switch ($methodType) {
 
     case "updateAdminProfile":
         echo json_encode($AdminClass->updateAdminProfile(json_encode($jsonData)));
+        break;
+
+    case "sendCheckInEmail":
+        echo json_encode($AdminClass->sendCheckInEmail($jsonData));
         break;
 }
 

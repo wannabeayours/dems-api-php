@@ -266,15 +266,16 @@ class Demiren_customer
     }
 
     // New Method
-  function customerBookingNoAccount($json)
+     function customerBookingNoAccount($json)
     {
         include "connection.php";
+        include "send_email.php";
         $json = json_decode($json, true);
 
         try {
             $conn->beginTransaction();
 
-            // ✅ Step 1: Insert walk-in customer (keep your existing form fields)
+            // ✅ Step 1: Insert walk-in customer
             $stmt = $conn->prepare("
             INSERT INTO tbl_customers_walk_in 
                 (customers_walk_in_fname, customers_walk_in_lname, customers_walk_in_email, customers_walk_in_phone, customers_walk_in_created_at, customers_walk_in_status)
@@ -296,7 +297,7 @@ class Demiren_customer
             $checkIn = $bookingDetails["checkIn"];
             $checkOut = $bookingDetails["checkOut"];
 
-            // ✅ Step 3: Insert booking (same as with-account but with walk-in customer ID)
+            // ✅ Step 3: Insert booking
             $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
@@ -318,10 +319,11 @@ class Demiren_customer
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
-            // ✅ Step 4: For each room requested, assign an available physical room (same logic as with-account)
+            // ✅ Step 4: Assign available rooms and handle charges
             foreach ($roomDetails as $room) {
                 $roomTypeId = $room["roomTypeId"];
 
+                // Find available room for this type and date range
                 $availabilityStmt = $conn->prepare("
                 SELECT r.roomnumber_id
                 FROM tbl_rooms r
@@ -355,9 +357,11 @@ class Demiren_customer
 
                 $selectedRoomNumberId = $availableRoom['roomnumber_id'];
 
-                // ✅ Insert booking room row (with adult/children counts like with-account)
-                $sql = "INSERT INTO tbl_booking_room (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
-                    VALUES (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
+                // Insert booking room
+                $sql = "INSERT INTO tbl_booking_room 
+                (booking_id, roomtype_id, roomnumber_id, bookingRoom_adult, bookingRoom_children) 
+                VALUES 
+                (:booking_id, :roomtype_id, :roomnumber_id, :bookingRoom_adult, :bookingRoom_children)";
                 $stmt = $conn->prepare($sql);
                 $stmt->bindParam(":booking_id", $bookingId);
                 $stmt->bindParam(":roomtype_id", $roomTypeId);
@@ -365,25 +369,14 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_adult", $room["adultCount"]);
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
-                // capture the just-inserted booking_room_id
-                $bookingRoomId = $conn->lastInsertId();
-                if ($room["bedCount"] > 0) {
+                $bookingRoomId = $conn->lastInsertId(); // ✅ Keep this separate
+
+                // Add extra bed charge if applicable
+                if (isset($room["bedCount"]) && $room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
-                    $sql = "INSERT INTO tbl_booking_charges(
-                                charges_master_id,
-                                booking_room_id,
-                                booking_charges_price,
-                                booking_charges_quantity,
-                                booking_charges_total,
-                                charges_status_id
-                            ) VALUES (
-                                2,
-                                :booking_room_id,
-                                400,
-                                :booking_charges_quantity,
-                                :booking_charges_total,
-                                1
-                            )"; // 1 = Pending per tbl_charges_status
+                    $sql = "INSERT INTO tbl_booking_charges
+                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
+                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
                     $stmt = $conn->prepare($sql);
                     $stmt->bindParam(":booking_room_id", $bookingRoomId);
                     $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
@@ -392,14 +385,20 @@ class Demiren_customer
                 }
             }
 
-            // ✅ Step 5: Insert booking history (keep from your original code)
-            $sql = "INSERT INTO tbl_booking_history(booking_id, employee_id, status_id, updated_at) VALUES (:booking_id, NULL, 1, NOW())";
+            // ✅ Step 5: Booking history (Pending)
+            $sql = "INSERT INTO tbl_booking_history
+            (booking_id, employee_id, status_id, updated_at) 
+            VALUES 
+            (:booking_id, NULL, 1, NOW())";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->execute();
 
-            $sql = "INSERT INTO tbl_billing(booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
-                VALUES (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
+            // ✅ Step 6: Billing record
+            $sql = "INSERT INTO tbl_billing
+            (booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
+            VALUES 
+            (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->bindParam(":payment_method_id", $bookingDetails["payment_method_id"]);
@@ -410,102 +409,171 @@ class Demiren_customer
             $stmt->execute();
 
             $conn->commit();
-            
-            // ✅ Step 6: Send email notification to customer
-            try {
-                include_once 'send_email.php';
-                $emailSender = new SendEmail();
-                
-                // Prepare email content
-                $customerName = $json["walkinfirstname"] . " " . $json["walkinlastname"];
-                $customerEmail = $json["email"];
-                
-                $emailSubject = "Booking Confirmation - Reference #" . $referenceNo;
-                
-                $emailBody = "
-                <html>
-                <head>
+            $emailSubject = 'Demirens Booking';
+           $emailBody = '
+                    <html>
+                    <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
-                        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                        .header { background-color: #113F67; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                        .content { background-color: #f9f9f9; padding: 20px; border-radius: 0 0 8px 8px; }
-                        .booking-details { background-color: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #113F67; }
-                        .status-pending { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 15px 0; }
-                        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
-                        .highlight { color: #113F67; font-weight: bold; }
+                        /* Base styles */
+                        body {
+                            margin: 0;
+                            padding: 0;
+                            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                            background-color: #f4f6f8;
+                            color: #333;
+                        }
+
+                        .email-wrapper {
+                            width: 100%;
+                            background-color: #f4f6f8;
+                            padding: 40px 0;
+                        }
+
+                        .email-container {
+                            max-width: 600px;
+                            margin: 0 auto;
+                            background-color: #ffffff;
+                            border-radius: 12px;
+                            overflow: hidden;
+                            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+                            border: 1px solid #e6ebf1;
+                        }
+
+                        /* Header */
+                        .email-header {
+                            background: linear-gradient(135deg, #1a73e8, #4285f4);
+                            color: white;
+                            text-align: center;
+                            padding: 25px 20px;
+                        }
+
+                        .email-header h1 {
+                            margin: 0;
+                            font-size: 22px;
+                            font-weight: 600;
+                            letter-spacing: 0.3px;
+                        }
+
+                        /* Body content */
+                        .email-body {
+                            padding: 35px 40px;
+                        }
+
+                        .email-body h2 {
+                            font-size: 20px;
+                            font-weight: 600;
+                            color: #1a73e8;
+                            margin-top: 0;
+                            margin-bottom: 15px;
+                        }
+
+                        .email-body p {
+                            font-size: 15px;
+                            line-height: 1.7;
+                            color: #444;
+                            margin: 10px 0;
+                        }
+
+                        .email-highlight {
+                            background-color: #f1f6ff;
+                            border-left: 4px solid #1a73e8;
+                            padding: 12px 16px;
+                            margin: 25px 0;
+                            border-radius: 6px;
+                            color: #1a1a1a;
+                            font-size: 14px;
+                            line-height: 1.6;
+                        }
+
+                        /* Button */
+                        .email-button {
+                            display: inline-block;
+                            background-color: #1a73e8;
+                            color: #ffffff;
+                            padding: 12px 28px;
+                            border-radius: 6px;
+                            font-size: 15px;
+                            text-decoration: none;
+                            font-weight: 500;
+                            margin-top: 20px;
+                        }
+
+                        .email-button:hover {
+                            background-color: #1669c1;
+                        }
+
+                        /* Footer */
+                        .email-footer {
+                            font-size: 12px;
+                            color: #777;
+                            text-align: center;
+                            border-top: 1px solid #eaeaea;
+                            padding: 20px 10px;
+                            background-color: #fafafa;
+                        }
+
+                        /* Mobile responsive */
+                        @media only screen and (max-width: 600px) {
+                            .email-body {
+                                padding: 25px 20px;
+                            }
+                            .email-header h1 {
+                                font-size: 20px;
+                            }
+                        }
                     </style>
-                </head>
-                <body>
-                    <div class='container'>
-                        <div class='header'>
-                            <h1>🏨 Demiren Hotel & Restaurant</h1>
-                            <p>Booking Confirmation</p>
-                        </div>
-                        
-                        <div class='content'>
-                            <p>Dear <strong>" . htmlspecialchars($customerName) . "</strong>,</p>
-                            
-                            <p>Thank you for choosing Demiren Hotel & Restaurant for your upcoming stay!</p>
-                            
-                            <div class='booking-details'>
-                                <h3>📋 Booking Details</h3>
-                                <p><strong>Reference Number:</strong> <span class='highlight'>" . $referenceNo . "</span></p>
-                                <p><strong>Check-in Date:</strong> " . date('F j, Y', strtotime($checkIn)) . "</p>
-                                <p><strong>Check-out Date:</strong> " . date('F j, Y', strtotime($checkOut)) . "</p>
-                                <p><strong>Total Guests:</strong> " . $totalGuests . "</p>
-                                <p><strong>Total Amount:</strong> ₱" . number_format($bookingDetails["totalAmount"], 2) . "</p>
-                                <p><strong>Down Payment:</strong> ₱" . number_format($bookingDetails["downpayment"], 2) . "</p>
+                    </head>
+                    <body>
+                        <div class="email-wrapper">
+                            <div class="email-container">
+                                <div class="email-header">
+                                    <h1>Demiren Hotel & Restaurant</h1>
+                                </div>
+
+                                <div class="email-body">
+                                    <h2>Your Booking Request Has Been Received!</h2>
+
+                                    <p>Hi there,</p>
+                                    <p>Thank you for choosing <strong>Demiren Hotel & Restaurant</strong>. We’re delighted that you’re planning to stay with us!</p>
+
+                                    <div class="email-highlight">
+                                        <strong>Your booking request is currently under review.</strong><br>
+                                        Once it’s approved by our front desk team, you’ll receive a confirmation email with all the details of your stay.
+                                        You may cancel it within 24 hours Just contact us at <a href="mailto:demirenhotel@gmail.com" style="color:#1a73e8; text-decoration:none;">info@demirenhotel.com</a>.
+                                    </div>
+
+                                    <p>If you have any questions in the meantime, feel free to contact us at <a href="mailto:demirenhotel@gmail.com" style="color:#1a73e8; text-decoration:none;">info@demirenhotel.com</a>.</p>
+                                    <p>We look forward to welcoming you soon!</p>
+
+                                    <p>Warm regards,<br>
+                                    <strong>The Demiren Team</strong></p>
+
+                                    
+                                </div>
+
+                                <div class="email-footer">
+                                    This is an automated message from Demiren Hotel & Restaurant.<br>
+                                    Please do not reply directly to this email.
+                                </div>
                             </div>
-                            
-                            <div class='status-pending'>
-                                <h4>⏳ Booking Status: Pending Approval</h4>
-                                <p>Your booking request has been received and is currently being reviewed by our team.</p>
-                                <p><strong>Please wait for our confirmation email</strong> which will be sent within 24 hours.</p>
-                            </div>
-                            
-                            <h4>📞 Contact Information</h4>
-                            <p>If you have any questions or need to make changes to your booking, please contact us:</p>
-                            <ul>
-                                <li>📧 Email: reservations@demirenhotel.com</li>
-                                <li>📞 Phone: (02) 123-4567</li>
-                                <li>🏨 Address: Demiren Hotel & Restaurant</li>
-                            </ul>
-                            
-                            <p>We look forward to welcoming you to Demiren Hotel & Restaurant!</p>
-                            
-                            <p>Best regards,<br>
-                            <strong>Demiren Hotel & Restaurant Team</strong></p>
                         </div>
-                        
-                        <div class='footer'>
-                            <p>This is an automated message. Please do not reply to this email.</p>
-                            <p>© 2024 Demiren Hotel & Restaurant. All rights reserved.</p>
-                        </div>
-                    </div>
-                </body>
-                </html>";
-                
-                // Send the email
-                $emailSent = $emailSender->sendEmail($customerEmail, $emailSubject, $emailBody);
-                
-                if ($emailSent) {
-                    error_log("Booking confirmation email sent successfully to: " . $customerEmail . " for booking: " . $referenceNo);
-                } else {
-                    error_log("Failed to send booking confirmation email to: " . $customerEmail . " for booking: " . $referenceNo);
-                }
-                
-            } catch (Exception $emailError) {
-                // Log email error but don't fail the booking process
-                error_log("Email notification error for booking " . $referenceNo . ": " . $emailError->getMessage());
-            }
-            
+                    </body>
+                    </html>';
+
+
+
+
+            $sendEmail = new SendEmail();
+            $sendEmail->sendEmail($json["email"], $emailSubject, $emailBody);
             return 1;
         } catch (PDOException $e) {
             $conn->rollBack();
             return $e->getMessage();
         }
     }
+
+
 
     // Old Method
     // function customerBookingNoAccount($json)
@@ -883,7 +951,8 @@ class Demiren_customer
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : 0;
     }
-     function customerRegistration($json)
+
+    function customerRegistration($json)
     {
         include "connection.php";
         $json = json_decode($json, true);
@@ -1656,7 +1725,7 @@ class Demiren_customer
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
 
-        $sql = "SELECT a.*, b.*, c.*, d.*,
+        $sql = "SELECT a.*, b.*, c.*, d.*, 
                f.booking_charges_id,
                f.booking_charges_quantity,
                f.booking_charges_price,
@@ -1674,7 +1743,7 @@ class Demiren_customer
         LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
         LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
         LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-        LEFT JOIN tbl_charges_status i ON i.booking_charge_status = f.booking_charge_status
+        LEFT JOIN tbl_charges_status i ON i.charges_status_id = f.booking_charge_status
         WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
           AND :today BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
         ORDER BY a.booking_created_at DESC";
@@ -1685,7 +1754,6 @@ class Demiren_customer
         $stmt->execute();
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
         $bookings = [];
 
         foreach ($rows as $row) {
@@ -1741,34 +1809,31 @@ class Demiren_customer
             }
         }
 
+        // ✅ NEW SECTION: Show each charge separately (no grouping)
         foreach ($bookings as &$booking) {
             foreach ($booking['roomsList'] as &$room) {
-                $grouped = [];
+                $chargesList = [];
+
                 foreach ($room['charges_raw'] as $c) {
-                    $id = $c['charges_master_id'];
-                    if (!isset($grouped[$id])) {
-                        $grouped[$id] = [
-                            "charges_master_id" => $id,
-                            "charges_master_name" => $c['name'],
-                            "charges_category_name" => $c['category'],
-                            "charges_master_status_id" => $c['status_id'],
-                            "charges_status_name" => $c['status_name'],
-                            "booking_charges_id" => $c['booking_charges_id'],
-                            "booking_charges_quantity" => 0,
-                            "booking_charges_price" => 0,
-                            "total" => 0
-                        ];
-                    }
-                    $grouped[$id]['booking_charges_quantity'] += $c['qty'];
-                    $grouped[$id]['total'] += $c['price'];
-                    $grouped[$id]['booking_charges_price'] =
-                        $grouped[$id]['total'] / $grouped[$id]['booking_charges_quantity'];
+                    $chargesList[] = [
+                        "charges_master_id" => $c['charges_master_id'],
+                        "charges_master_name" => $c['name'],
+                        "charges_category_name" => $c['category'],
+                        "charges_master_status_id" => $c['status_id'],
+                        "charges_status_name" => $c['status_name'],
+                        "booking_charges_id" => $c['booking_charges_id'],
+                        "booking_charges_quantity" => $c['qty'],
+                        "booking_charges_price" => $c['price'],
+                        "total" => $c['price'] * $c['qty']
+                    ];
                 }
-                $room['charges'] = array_values($grouped);
+
+                $room['charges'] = $chargesList;
                 unset($room['charges_raw']);
             }
+
             $booking['roomsList'] = array_values($booking['roomsList']);
-            // Optional recompute:
+            // Optional recompute total:
             // $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
         }
 
@@ -1777,7 +1842,8 @@ class Demiren_customer
 
 
 
-        function checkAndSendOTP($json)
+
+    function checkAndSendOTP($json)
     {
         include "connection.php";
         include "send_email.php";
@@ -1879,7 +1945,7 @@ class Demiren_customer
                 error_log("Email result: " . print_r($emailResult, true));
                 error_log("OTP code: " . $otp);
                 error_log("Email subject: " . $emailSubject);
-                
+
                 return json_encode([
                     "success" => false,
                     "message" => "Failed to send OTP email. Please check your email address and try again."
