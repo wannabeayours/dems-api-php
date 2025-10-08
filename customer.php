@@ -266,7 +266,7 @@ class Demiren_customer
     }
 
     // New Method
-     function customerBookingNoAccount($json)
+    function customerBookingNoAccount($json)
     {
         include "connection.php";
         include "send_email.php";
@@ -410,7 +410,7 @@ class Demiren_customer
 
             $conn->commit();
             $emailSubject = 'Demirens Booking';
-           $emailBody = '
+            $emailBody = '
                     <html>
                     <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1719,34 +1719,33 @@ class Demiren_customer
 
     function getBookingSummary($json)
     {
-        // {"booking_customer_id": 1}
         include "connection.php";
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
         $today = date("Y-m-d");
 
         $sql = "SELECT a.*, b.*, c.*, d.*, 
-               f.booking_charges_id,
-               f.booking_charges_quantity,
-               f.booking_charges_price,
-               g.charges_master_id,
-               g.charges_master_name,
-               g.charges_master_price,
-               h.charges_category_id,
-               h.charges_category_name,
-               IFNULL(i.charges_status_name, 'Pending') AS charges_status_name,
-               IFNULL(f.booking_charge_status, 1) AS booking_charge_status
-        FROM tbl_booking a
-        INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
-        INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
-        INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-        LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
-        LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
-        LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
-        LEFT JOIN tbl_charges_status i ON i.charges_status_id = f.booking_charge_status
-        WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-          AND :today BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
-        ORDER BY a.booking_created_at DESC";
+                   f.booking_charges_id,
+                   f.booking_charges_quantity,
+                   f.booking_charges_price,
+                   g.charges_master_id,
+                   g.charges_master_name,
+                   g.charges_master_price,
+                   h.charges_category_id,
+                   h.charges_category_name,
+                   IFNULL(i.charges_status_name, 'Pending') AS charges_status_name,
+                   IFNULL(f.booking_charge_status, 1) AS booking_charge_status
+            FROM tbl_booking a
+            INNER JOIN tbl_booking_room b ON b.booking_id = a.booking_id
+            INNER JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
+            INNER JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
+            LEFT JOIN tbl_booking_charges f ON f.booking_room_id = b.booking_room_id
+            LEFT JOIN tbl_charges_master g ON g.charges_master_id = f.charges_master_id
+            LEFT JOIN tbl_charges_category h ON h.charges_category_id = g.charges_category_id
+            LEFT JOIN tbl_charges_status i ON i.charges_status_id = f.booking_charge_status
+            WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+              AND :today BETWEEN DATE(a.booking_checkin_dateandtime) AND DATE(a.booking_checkout_dateandtime)
+            ORDER BY a.booking_created_at DESC";
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':today', $today);
@@ -1790,6 +1789,7 @@ class Demiren_customer
                     "roomfloor" => $row['roomfloor'],
                     "room_status_id" => $row['room_status_id'],
                     "charges_raw" => [],
+                    "isAddBed" => 0 // default
                 ];
                 $bookings[$bookingId]['roomsTotal'] += (float)$row['roomtype_price'];
             }
@@ -1807,15 +1807,17 @@ class Demiren_customer
                 ];
                 $bookings[$bookingId]['chargesTotal'] += $row['booking_charges_price'];
             }
+
+            // ✅ Only count Bed if not cancelled
+            if ($row['charges_master_id'] == 2 && $row['booking_charge_status'] != 3) {
+                $bookings[$bookingId]['roomsList'][$roomKey]['isAddBed'] = 1;
+            }
         }
 
-        // ✅ NEW SECTION: Show each charge separately (no grouping)
         foreach ($bookings as &$booking) {
             foreach ($booking['roomsList'] as &$room) {
-                $chargesList = [];
-
-                foreach ($room['charges_raw'] as $c) {
-                    $chargesList[] = [
+                $room['charges'] = array_map(function ($c) {
+                    return [
                         "charges_master_id" => $c['charges_master_id'],
                         "charges_master_name" => $c['name'],
                         "charges_category_name" => $c['category'],
@@ -1826,21 +1828,14 @@ class Demiren_customer
                         "booking_charges_price" => $c['price'],
                         "total" => $c['price'] * $c['qty']
                     ];
-                }
-
-                $room['charges'] = $chargesList;
+                }, $room['charges_raw']);
                 unset($room['charges_raw']);
             }
-
             $booking['roomsList'] = array_values($booking['roomsList']);
-            // Optional recompute total:
-            // $booking['booking_totalAmount'] = $booking['roomsTotal'] + $booking['chargesTotal'];
         }
 
         return array_values($bookings);
     }
-
-
 
 
     function checkAndSendOTP($json)
@@ -2009,19 +2004,19 @@ class Demiren_customer
                 $totalPrice += $charge["booking_charges_price"];
             }
 
-            $sqlSelect = "SELECT booking_totalAmount FROM tbl_booking WHERE booking_id = :bookingId";
-            $stmtSelect = $conn->prepare($sqlSelect);
-            $stmtSelect->bindParam(":bookingId", $bookingId);
-            $stmtSelect->execute();
-            $currentTotal = $stmtSelect->fetchColumn();
+            // $sqlSelect = "SELECT booking_totalAmount FROM tbl_booking WHERE booking_id = :bookingId";
+            // $stmtSelect = $conn->prepare($sqlSelect);
+            // $stmtSelect->bindParam(":bookingId", $bookingId);
+            // $stmtSelect->execute();
+            // $currentTotal = $stmtSelect->fetchColumn();
 
-            $newTotal = $currentTotal + $totalPrice;
+            // $newTotal = $currentTotal + $totalPrice;
 
-            $sqlUpdate = "UPDATE tbl_booking SET booking_totalAmount = :newTotal WHERE booking_id = :bookingId";
-            $stmtUpdate = $conn->prepare($sqlUpdate);
-            $stmtUpdate->bindParam(":newTotal", $newTotal);
-            $stmtUpdate->bindParam(":bookingId", $bookingId);
-            $stmtUpdate->execute();
+            // $sqlUpdate = "UPDATE tbl_booking SET booking_totalAmount = :newTotal WHERE booking_id = :bookingId";
+            // $stmtUpdate = $conn->prepare($sqlUpdate);
+            // $stmtUpdate->bindParam(":newTotal", $newTotal);
+            // $stmtUpdate->bindParam(":bookingId", $bookingId);
+            // $stmtUpdate->execute();
 
             $conn->commit();
             return 1;

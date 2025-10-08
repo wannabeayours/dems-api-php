@@ -2022,9 +2022,9 @@ class Admin_Functions
                     bc.booking_charges_price as request_price,
                     bc.booking_charges_total as request_total,
                     CASE 
-                        WHEN bc.charges_status_id = 1 THEN 'pending'
-                        WHEN bc.charges_status_id = 2 THEN 'approved'
-                        WHEN bc.charges_status_id = 3 THEN 'rejected'
+                        WHEN bc.booking_charge_status = 1 THEN 'pending'
+                        WHEN bc.booking_charge_status = 2 THEN 'approved'
+                        WHEN bc.booking_charge_status = 3 THEN 'rejected'
                         ELSE 'pending'
                     END as request_status,
                     '' as request_notes,
@@ -2088,10 +2088,10 @@ class Admin_Functions
         $admin_notes = $data['admin_notes'] ?? '';
 
         try {
-            // Update the charges_status_id to approved (2)
+            // Update the booking_charge_status to approved (2)
             $updateRequest = $conn->prepare("
                 UPDATE tbl_booking_charges 
-                SET charges_status_id = 2
+                SET booking_charge_status = 2
                 WHERE booking_charges_id = :request_id
             ");
             $updateRequest->bindParam(':request_id', $request_id);
@@ -2113,10 +2113,10 @@ class Admin_Functions
         $admin_notes = $data['admin_notes'] ?? '';
 
         try {
-            // Update the charges_status_id to rejected/cancelled (3)
+            // Update the booking_charge_status to rejected/cancelled (3)
             $stmt = $conn->prepare("
                 UPDATE tbl_booking_charges 
-                SET charges_status_id = 3
+                SET booking_charge_status = 3
                 WHERE booking_charges_id = :request_id
             ");
             $stmt->bindParam(':request_id', $request_id);
@@ -2134,12 +2134,12 @@ class Admin_Functions
 
         $sql = "SELECT 
                     COUNT(*) as total_requests,
-                    SUM(CASE WHEN bc.charges_status_id = 1 THEN 1 ELSE 0 END) as pending_requests,
-                    SUM(CASE WHEN bc.charges_status_id = 2 THEN 1 ELSE 0 END) as approved_requests,
-                    SUM(CASE WHEN bc.charges_status_id = 3 THEN 1 ELSE 0 END) as rejected_requests,
-                    SUM(CASE WHEN bc.charges_status_id = 1 THEN bc.booking_charges_total ELSE 0 END) as pending_amount,
-                    SUM(CASE WHEN bc.charges_status_id = 2 THEN bc.booking_charges_total ELSE 0 END) as approved_amount,
-                    SUM(CASE WHEN bc.charges_status_id = 2 
+                    SUM(CASE WHEN bc.booking_charge_status = 1 THEN 1 ELSE 0 END) as pending_requests,
+                    SUM(CASE WHEN bc.booking_charge_status = 2 THEN 1 ELSE 0 END) as approved_requests,
+                    SUM(CASE WHEN bc.booking_charge_status = 3 THEN 1 ELSE 0 END) as rejected_requests,
+                    SUM(CASE WHEN bc.booking_charge_status = 1 THEN bc.booking_charges_total ELSE 0 END) as pending_amount,
+                    SUM(CASE WHEN bc.booking_charge_status = 2 THEN bc.booking_charges_total ELSE 0 END) as approved_amount,
+                    SUM(CASE WHEN bc.booking_charge_status = 2 
                               AND YEAR(NOW()) = YEAR(NOW()) 
                               AND MONTH(NOW()) = MONTH(NOW()) 
                          THEN bc.booking_charges_total ELSE 0 END) as current_month_approved
@@ -2219,7 +2219,7 @@ class Admin_Functions
             }
 
             $amenities = $data['amenities']; // Array of amenities
-            $charges_status_id = $data['charges_status_id'] ?? 2; // Default to Approved
+            $booking_charge_status = $data['booking_charge_status'] ?? 2; // Default to Approved
 
             // Debug logging
             error_log("addAmenityRequest called with data: " . json_encode($data));
@@ -2245,14 +2245,14 @@ class Admin_Functions
                             booking_charges_price,
                             booking_charges_quantity,
                             booking_charges_total,
-                            charges_status_id
+                            booking_charge_status
                         ) VALUES (
                             :booking_room_id,
                             :charges_master_id,
                             :booking_charges_price,
                             :booking_charges_quantity,
                             :booking_charges_total,
-                            :charges_status_id
+                            :booking_charge_status
                         )";
 
                 $stmt = $conn->prepare($sql);
@@ -2261,7 +2261,7 @@ class Admin_Functions
                 $stmt->bindParam(':booking_charges_price', $booking_charges_price);
                 $stmt->bindParam(':booking_charges_quantity', $booking_charges_quantity);
                 $stmt->bindParam(':booking_charges_total', $booking_charges_total);
-                $stmt->bindParam(':charges_status_id', $charges_status_id);
+                $stmt->bindParam(':booking_charge_status', $booking_charge_status);
 
                 if ($stmt->execute()) {
                     $inserted_count++;
@@ -2295,7 +2295,7 @@ class Admin_Functions
             // Status 1 = Pending, 2 = Delivered, 3 = Cancelled
             $sql = "SELECT COUNT(*) as pending_count 
                     FROM tbl_booking_charges 
-                    WHERE charges_status_id = 1";
+                    WHERE booking_charge_status = 1";
 
             $stmt = $conn->prepare($sql);
             $stmt->execute();
@@ -2581,7 +2581,7 @@ class Admin_Functions
                 // Insert booking charges for the extension
                 $insertBookingCharges = $conn->prepare("
                     INSERT INTO tbl_booking_charges 
-                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, charges_status_id)
+                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, booking_charge_status)
                     VALUES (:charges_master_id, :booking_room_id, :room_price, :additional_nights, :additional_amount, 2)
                 ");
                 $insertBookingCharges->execute([
@@ -2901,7 +2901,7 @@ class Admin_Functions
                     // Insert booking charges for the extension
                     $insertBookingCharges = $conn->prepare("
                         INSERT INTO tbl_booking_charges 
-                        (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, charges_status_id)
+                        (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, booking_charge_status)
                         VALUES (:charges_master_id, :booking_room_id, :room_price, :additional_nights, :room_amount, 2)
                     ");
                     $insertBookingCharges->execute([
