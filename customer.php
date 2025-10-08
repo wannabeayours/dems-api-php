@@ -1983,14 +1983,21 @@ class Demiren_customer
 
         $charges = $data["charges"];
         $bookingId = $data["bookingId"];
+        $notes = $data["notes"];
 
         try {
             $conn->beginTransaction();
 
+            $sql = "INSERT INTO tbl_booking_charges_notes(booking_c_notes)
+                    VALUES (:booking_c_notes)";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":booking_c_notes", $notes);
+            $stmt->execute();
+            $lastInsertId = $conn->lastInsertId();
             $sqlInsert = "INSERT INTO tbl_booking_charges 
-            (booking_room_id, charges_master_id, booking_charges_quantity, booking_charges_price)
+            (booking_room_id, charges_master_id, booking_charges_quantity, booking_charges_price, booking_charges_notes_id )
             VALUES 
-            (:booking_room_id, :charges_master_id, :charges_quantity, :booking_charges_price)";
+            (:booking_room_id, :charges_master_id, :charges_quantity, :booking_charges_price, :booking_c_notes_id)";
             $stmtInsert = $conn->prepare($sqlInsert);
 
             $totalPrice = 0;
@@ -1999,6 +2006,7 @@ class Demiren_customer
                 $stmtInsert->bindParam(":charges_master_id", $charge["charges_master_id"]);
                 $stmtInsert->bindParam(":charges_quantity", $charge["charges_quantity"]);
                 $stmtInsert->bindParam(":booking_charges_price", $charge["booking_charges_price"]);
+                $stmtInsert->bindParam(":booking_c_notes_id", $lastInsertId);
                 $stmtInsert->execute();
 
                 $totalPrice += $charge["booking_charges_price"];
