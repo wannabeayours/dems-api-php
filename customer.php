@@ -374,9 +374,8 @@ class Demiren_customer
                 // Add extra bed charge if applicable
                 if (isset($room["bedCount"]) && $room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
-                    $sql = "INSERT INTO tbl_booking_charges
-                    (charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
-                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
+                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, booking_charge_status)
+                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total, 2)";
                     $stmt = $conn->prepare($sql);
                     $stmt->bindParam(":booking_room_id", $bookingRoomId);
                     $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
@@ -1268,8 +1267,8 @@ class Demiren_customer
                 $bookingRoomId = $conn->lastInsertId();
                 if ($room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
-                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total)
-                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total)";
+                    $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, booking_charge_status)
+                    VALUES (2, :booking_room_id, 400, :booking_charges_quantity, :booking_charges_total, 2)";
                     $stmt = $conn->prepare($sql);
                     $stmt->bindParam(":booking_room_id", $bookingRoomId);
                     $stmt->bindParam(":booking_charges_quantity", $room["bedCount"]);
