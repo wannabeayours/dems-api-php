@@ -272,6 +272,18 @@ class Demiren_customer
         include "send_email.php";
         $json = json_decode($json, true);
 
+        $returnValueImage = uploadImage();
+        switch ($returnValueImage) {
+            case 2:
+                return 2; // invalid file type
+            case 3:
+                return 3; // upload error
+            case 4:
+                return 4; // file too big
+            default:
+                break;
+        }
+
         try {
             $conn->beginTransaction();
 
@@ -303,11 +315,11 @@ class Demiren_customer
             INSERT INTO tbl_booking 
                 (customers_id, customers_walk_in_id, guests_amnt, booking_downpayment, 
                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
-                booking_totalAmount, booking_isArchive, reference_no) 
+                booking_totalAmount, booking_isArchive, reference_no, booking_fileName) 
             VALUES 
                 (NULL, :walkin_id, :guestTotal, :downpayment, 
                 :checkin, :checkout, NOW(), 
-                :totalAmount, 0, :reference_no)
+                :totalAmount, 0, :reference_no, :file)
         ");
             $stmt->bindParam(":walkin_id", $walkInCustomerId);
             $stmt->bindParam(":guestTotal", $totalGuests);
@@ -316,6 +328,7 @@ class Demiren_customer
             $stmt->bindParam(":checkout", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":reference_no", $referenceNo);
+            $stmt->bindParam(":file", $returnValueImage);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
@@ -1189,6 +1202,17 @@ class Demiren_customer
         // yessssss
         include "connection.php";
         $json = json_decode($json, true);
+        $returnValueImage = uploadImage();
+        switch ($returnValueImage) {
+            case 2:
+                return 2; // invalid file type
+            case 3:
+                return 3; // upload error
+            case 4:
+                return 4; // file too big
+            default:
+                break;
+        }
 
         try {
             $conn->beginTransaction();
@@ -1203,16 +1227,17 @@ class Demiren_customer
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
                 (customers_id, guests_amnt, customers_walk_in_id, booking_downpayment, 
-                booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_totalAmount) 
+                booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_totalAmount, booking_fileName) 
             VALUES 
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
-                :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount)");
+                :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount, :file)");
             $stmt->bindParam(":customers_id", $customerId);
             $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
             $stmt->bindParam(":booking_checkin_dateandtime", $checkIn);
             $stmt->bindParam(":booking_checkout_dateandtime", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":guestTotalAmount", $totalGuests);
+            $stmt->bindParam(":file", $returnValueImage);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
@@ -1958,6 +1983,64 @@ class Demiren_customer
         }
     }
 
+    function checkUsernameExists($json)
+    {
+        include "connection.php";
+        $data = json_decode($json, true);
+
+        try {
+            // Check if username already exists in tbl_customers_online
+            $sql = "SELECT customers_online_id 
+                    FROM tbl_customers_online 
+                    WHERE customers_online_username = :username 
+                    LIMIT 1";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":username", $data["username"]);
+            $stmt->execute();
+
+            if ($stmt->rowCount() > 0) {
+                return json_encode([
+                    "success" => false,
+                    "exists" => true,
+                    "message" => "Username already exists. Please choose a different username."
+                ]);
+            }
+
+            // Also check if username exists in employee table (to avoid conflicts)
+            $sql = "SELECT employee_id 
+                    FROM tbl_employee 
+                    WHERE employee_username = :username 
+                    LIMIT 1";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":username", $data["username"]);
+            $stmt->execute();
+
+            if ($stmt->rowCount() > 0) {
+                return json_encode([
+                    "success" => false,
+                    "exists" => true,
+                    "message" => "Username already exists. Please choose a different username."
+                ]);
+            }
+
+            return json_encode([
+                "success" => true,
+                "exists" => false,
+                "message" => "Username is available."
+            ]);
+        } catch (PDOException $e) {
+            return json_encode([
+                "success" => false,
+                "message" => "Database error: " . $e->getMessage()
+            ]);
+        } catch (Exception $e) {
+            return json_encode([
+                "success" => false,
+                "message" => "Error: " . $e->getMessage()
+            ]);
+        }
+    }
+
     function getAmenitiesMaster()
     {
         include "connection.php";
@@ -2155,7 +2238,54 @@ class Demiren_customer
     // }
 } //customer
 
+function uploadImage()
+{
+    if (isset($_FILES["file"])) {
+        $file = $_FILES['file'];
+        // print_r($file);
+        $fileName = $_FILES['file']['name'];
+        $fileTmpName = $_FILES['file']['tmp_name'];
+        $fileSize = $_FILES['file']['size'];
+        $fileError = $_FILES['file']['error'];
+        // $fileType = $_FILES['file']['type'];
 
+        $fileExt = explode(".", $fileName);
+        $fileActualExt = strtolower(end($fileExt));
+
+        $allowed = ["jpg", "jpeg", "png"];
+
+        if (in_array($fileActualExt, $allowed)) {
+            if ($fileError === 0) {
+                if ($fileSize < 25000000) {
+                    $fileNameNew = uniqid("", true) . "." . $fileActualExt;
+                    $fileDestination =  'images/' . $fileNameNew;
+                    move_uploaded_file($fileTmpName, $fileDestination);
+                    return $fileNameNew;
+                } else {
+                    return 4;
+                }
+            } else {
+                return 3;
+            }
+        } else {
+            return 2;
+        }
+    } else {
+        return "";
+    }
+
+    // $returnValueImage = uploadImage();
+    // switch ($returnValueImage) {
+    //   case 2:
+    //     return 2; // invalid file type
+    //   case 3:
+    //     return 3; // upload error
+    //   case 4:
+    //     return 4; // file too big
+    //   default:
+    //     break;
+    // }
+}
 
 
 $json = isset($_POST["json"]) ? $_POST["json"] : "0";
