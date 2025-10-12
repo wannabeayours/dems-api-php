@@ -1881,6 +1881,14 @@ class Demiren_customer
             $stmt->bindParam(":email", $data["guest_email"]);
             $stmt->execute();
 
+            // check if username exists in tbl_customers
+            if (recordExists($data["username"], "tbl_customers_online", "customers_online_username")) {
+                return json_encode([
+                    "success" => false,
+                    "message" => "Username already exists."
+                ]);
+            }
+
             if ($stmt->rowCount() > 0) {
                 return json_encode([
                     "success" => false,
@@ -2239,11 +2247,11 @@ class Demiren_customer
     //     }
     // }
 
-function getCurrentBalance($bookingId)
-{
-    include "connection.php";
+    function getCurrentBalance($bookingId)
+    {
+        include "connection.php";
 
-    $sql = "
+        $sql = "
         SELECT billing_balance 
         FROM tbl_billing 
         WHERE booking_id = :bookingId 
@@ -2251,16 +2259,69 @@ function getCurrentBalance($bookingId)
         LIMIT 1
     ";
 
-    $stmt = $conn->prepare($sql);
-    $stmt->bindParam(':bookingId', $bookingId, PDO::PARAM_INT);
-    $stmt->execute();
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':bookingId', $bookingId, PDO::PARAM_INT);
+        $stmt->execute();
 
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $result ? $result['billing_balance'] : 0;
-}
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result ? $result['billing_balance'] : 0;
+    }
 
 
+    function sendMessageEmail($json)
+    {
+        include "connection.php";
+        include "send_email.php";
+        $data = json_decode($json, true);
+        $emailToSent = "xmelmacario@gmail.com";
+        $guestEmail = $data["email"];
+        $message = $data["message"];
+        $name = $data["name"];
+
+        $emailBody = '
+        <html>
+        <head>
+        <style>
+            body { font-family: Arial, sans-serif; color: #333; background-color: #f9f9f9; padding: 20px; }
+            .container { background-color: #fff; border-radius: 10px; padding: 20px; max-width: 600px; margin: auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            h2 { color: #1a73e8; }
+            .details { margin-top: 20px; }
+            .label { font-weight: bold; color: #555; }
+            .value { margin-bottom: 10px; }
+            .code { font-size: 20px; font-weight: bold; color: #444; background: #f0f0f0; padding: 10px; border-radius: 5px; text-align: center; margin: 20px 0; }
+            .footer { font-size: 12px; color: #777; margin-top: 30px; text-align: center; }
+        </style>
+        </head>
+        <body>
+        <div class="container">
+
+            <div class="details">
+            <p><span class="label">Customer Name:</span> ' . $name . '</p>
+            <p><span class="label">Guest Email:</span> ' . $guestEmail . '</p>
+            <p><span class="label">Message:</span> ' . $message . '</p>
+            </div>
+
+            <div class="footer">
+            This is an automated message. Please do not reply to this email.
+            </div>
+        </div>
+        </body>
+        </html>';
+        $sendEmail = new SendEmail();
+        return $sendEmail->sendEmail($emailToSent, "Customer Question", $emailBody);
+    }
 } //customer
+
+function recordExists($value, $table, $column)
+{
+    include "connection.php";
+    $sql = "SELECT COUNT(*) FROM $table WHERE $column = :value";
+    $stmt = $conn->prepare($sql);
+    $stmt->bindParam(":value", $value);
+    $stmt->execute();
+    $count = $stmt->fetchColumn();
+    return $count > 0;
+}
 
 function uploadImage()
 {
@@ -2423,6 +2484,9 @@ switch ($operation) {
         break;
     case "cancelReqAmenities":
         echo json_encode($demiren_customer->cancelReqAmenities($json));
+        break;
+    case "sendMessageEmail":
+        echo $demiren_customer->sendMessageEmail($json);
         break;
     // case "getRoomImages":
     //     echo json_encode($demiren_customer->getRoomImages($json));
