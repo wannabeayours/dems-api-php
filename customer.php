@@ -684,8 +684,10 @@ class Demiren_customer
             $bookingId = $row['booking_id'];
 
             if (!isset($bookings[$bookingId])) {
+                $balance = $this->getCurrentBalance($bookingId);
                 $bookings[$bookingId] = [
                     "booking_id" => $row['booking_id'],
+                    "balance" => $balance,
                     "booking_totalAmount" => $row['booking_totalAmount'],
                     "customers_id" => $row['customers_id'],
                     "customers_walk_in_id" => $row['customers_walk_in_id'],
@@ -1232,7 +1234,7 @@ class Demiren_customer
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
                 :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount, :file)");
             $stmt->bindParam(":customers_id", $customerId);
-            $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
+            $stmt->bindParam(":booking_downpayment", $bookingDetails["totalPay"]);
             $stmt->bindParam(":booking_checkin_dateandtime", $checkIn);
             $stmt->bindParam(":booking_checkout_dateandtime", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
@@ -1432,7 +1434,7 @@ class Demiren_customer
             LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
             LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
             LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
-            LEFT JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 0
             ORDER BY a.booking_id DESC";
@@ -2236,6 +2238,28 @@ class Demiren_customer
     //         return 0;
     //     }
     // }
+
+function getCurrentBalance($bookingId)
+{
+    include "connection.php";
+
+    $sql = "
+        SELECT billing_balance 
+        FROM tbl_billing 
+        WHERE booking_id = :bookingId 
+        ORDER BY billing_id DESC 
+        LIMIT 1
+    ";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bindParam(':bookingId', $bookingId, PDO::PARAM_INT);
+    $stmt->execute();
+
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $result ? $result['billing_balance'] : 0;
+}
+
+
 } //customer
 
 function uploadImage()
