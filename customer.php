@@ -406,6 +406,8 @@ class Demiren_customer
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->execute();
 
+            $balance = $bookingDetails["totalAmount"] - $bookingDetails["downpayment"];
+
             // ✅ Step 6: Billing record
             $sql = "INSERT INTO tbl_billing
             (booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
@@ -416,7 +418,7 @@ class Demiren_customer
             $stmt->bindParam(":payment_method_id", $bookingDetails["payment_method_id"]);
             $stmt->bindParam(":total_amount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":billing_vat", $bookingDetails["displayedVat"]);
-            $stmt->bindParam(":billing_balance", $bookingDetails["totalAmount"]);
+            $stmt->bindParam(":billing_balance", $balance);
             $stmt->bindParam(":billing_downpayment", $bookingDetails["downpayment"]);
             $stmt->execute();
 
@@ -1234,7 +1236,7 @@ class Demiren_customer
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
                 :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount, :file)");
             $stmt->bindParam(":customers_id", $customerId);
-            $stmt->bindParam(":booking_downpayment", $bookingDetails["totalPay"]);
+            $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
             $stmt->bindParam(":booking_checkin_dateandtime", $checkIn);
             $stmt->bindParam(":booking_checkout_dateandtime", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
@@ -1303,7 +1305,7 @@ class Demiren_customer
                     $stmt->execute();
                 }
             }
-            $balance = $bookingDetails["totalAmount"] - $bookingDetails["totalPay"];
+            $balance = $bookingDetails["totalAmount"] - $bookingDetails["downpayment"];
             $sql = "INSERT INTO tbl_billing(booking_id, payment_method_id, billing_total_amount, billing_dateandtime, billing_vat, billing_balance, billing_downpayment) 
                 VALUES (:booking_id, :payment_method_id, :total_amount, NOW(), :billing_vat, :billing_balance, :billing_downpayment)";
             $stmt = $conn->prepare($sql);
