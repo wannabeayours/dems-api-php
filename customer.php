@@ -245,7 +245,7 @@ class Demiren_customer
     {
         include "connection.php";
         $json = json_decode($json, true);
-        $sql = "UPDATE tbl_customers_online SET customers_online_authentication_status = :customers_online_authentication_status WHERE customers_online_id = :customers_online_id";
+        $sql = "UPDATE tbl_customers_online SET customers_online_status = :customers_online_authentication_status WHERE customers_online_id = :customers_online_id";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":customers_online_authentication_status", $json["customers_online_authentication_status"]);
         $stmt->bindParam(":customers_online_id", $json["customers_online_id"]);
@@ -313,7 +313,7 @@ class Demiren_customer
             $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
-                (customers_id, customers_walk_in_id, guests_amnt, booking_downpayment, 
+                (customers_id, customers_walk_in_id, guests_amnt, booking_payment, 
                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
                 booking_totalAmount, booking_isArchive, reference_no, booking_fileName) 
             VALUES 
@@ -699,7 +699,7 @@ class Demiren_customer
                     "customers_walk_in_id" => $row['customers_walk_in_id'],
                     "guests_amnt" => $row['guests_amnt'],
                     "booking_totalAmount" => $row['booking_totalAmount'],
-                    "booking_downpayment" => $row['booking_downpayment'],
+                    "booking_payment" => $row['booking_payment'],
                     "reference_no" => $row['reference_no'],
                     "booking_checkin_dateandtime" => $row['booking_checkin_dateandtime'],
                     "booking_checkout_dateandtime" => $row['booking_checkout_dateandtime'],
@@ -740,7 +740,7 @@ class Demiren_customer
         $sql = "SELECT 
                 a.roomtype_name,
                 b.roomnumber_id,
-                c.booking_downpayment,
+                c.booking_payment,
                 e.room_beds,
                 e.room_sizes,
                 c.booking_created_at,
@@ -773,7 +773,7 @@ class Demiren_customer
         $sql = "SELECT 
                 a.roomtype_name,
                 b.roomnumber_id,
-                c.booking_downpayment,
+                c.booking_payment,
                 e.room_beds,
                 e.room_sizes,
                 c.booking_created_at,
@@ -920,12 +920,12 @@ class Demiren_customer
         // {"customers_online_id": 1}
         include "connection.php";
         $data = json_decode($json, true);
-        $sql = "SELECT customers_online_authentication_status FROM tbl_customers_online WHERE customers_online_id = :customers_online_id";
+        $sql = "SELECT customers_online_status FROM tbl_customers_online WHERE customers_online_id = :customers_online_id";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":customers_online_id", $data["customers_online_id"]);
         $stmt->execute();
         $returnValue = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $returnValue["customers_online_authentication_status"] ?? 0;
+        return $returnValue["customers_online_status"] ?? 0;
     }
     function getRooms()
     {
@@ -1067,7 +1067,7 @@ class Demiren_customer
                 c.booking_id,
                 a.roomtype_name,
                 e.roomnumber_id,
-                c.booking_downpayment,
+                c.booking_payment,
                 e.room_beds,
                 e.room_sizes,
                 c.booking_created_at,
@@ -1223,7 +1223,7 @@ class Demiren_customer
             // ✅ First, create the booking master row
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
-                (customers_id, guests_amnt, customers_walk_in_id, booking_downpayment, 
+                (customers_id, guests_amnt, customers_walk_in_id, booking_payment, 
                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_totalAmount) 
             VALUES 
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
@@ -1383,7 +1383,7 @@ class Demiren_customer
             // If all rooms are available, proceed with booking
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
-                (customers_id, guests_amnt, customers_walk_in_id, booking_downpayment, 
+                (customers_id, guests_amnt, customers_walk_in_id, booking_payment, 
                  booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
                  children, adult, booking_totalAmount) 
             VALUES 
@@ -1464,7 +1464,7 @@ class Demiren_customer
                     "booking_date" => $row["booking_created_at"],
                     "booking_status" => $row["booking_status_name"],
                     "guests_amnt" => $row["guests_amnt"],
-                    "booking_downpayment" => $row["booking_downpayment"],
+                    "booking_payment" => $row["booking_payment"],
                     "booking_total" => $row["booking_totalAmount"],
                     "rooms" => []
                 ];
@@ -1542,7 +1542,7 @@ class Demiren_customer
                     "booking_date" => $row["booking_created_at"],
                     "booking_status" => $row["booking_status_name"],
                     "guests_amnt" => $row["guests_amnt"],
-                    "booking_downpayment" => $row["booking_downpayment"],
+                    "booking_payment" => $row["booking_payment"],
                     "booking_total" => $row["booking_totalAmount"],
                     "rooms" => []
                 ];
@@ -1607,7 +1607,7 @@ class Demiren_customer
             // 4️⃣ Update booking total and downpayment
             $sql = "UPDATE tbl_booking 
                 SET booking_totalAmount = :newTotal, 
-                    booking_downpayment = :newDownpayment
+                    booking_payment = :newDownpayment
                 WHERE booking_id = :bookingId";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(':newTotal', $newTotal);
@@ -1791,7 +1791,7 @@ class Demiren_customer
                     "customers_id" => $row['customers_id'],
                     "customers_walk_in_id" => $row['customers_walk_in_id'],
                     "guests_amnt" => $row['guests_amnt'],
-                    "booking_downpayment" => $row['booking_downpayment'],
+                    "booking_payment" => $row['booking_payment'],
                     "reference_no" => $row['reference_no'],
                     "booking_checkin_dateandtime" => $row['booking_checkin_dateandtime'],
                     "booking_checkout_dateandtime" => $row['booking_checkout_dateandtime'],
@@ -1869,7 +1869,6 @@ class Demiren_customer
         include "connection.php";
         include "send_email.php";
         $data = json_decode($json, true);
-
         try {
             // 1. Check if email already exists in tbl_customers (with online account)
             $sql = "SELECT c.customers_id 
@@ -2055,7 +2054,8 @@ class Demiren_customer
     {
         include "connection.php";
         $sql = "SELECT a.*, b.charges_category_name FROM tbl_charges_master a 
-                INNER JOIN tbl_charges_category b ON b.charges_category_id = a.charges_category_id";
+                INNER JOIN tbl_charges_category b ON b.charges_category_id = a.charges_category_id
+                WHERE a.charges_category_id = 1";
         $stmt = $conn->prepare($sql);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];

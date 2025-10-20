@@ -348,11 +348,7 @@ class Admin_Functions
                                 COALESCE(latest_billing.billing_downpayment, b.booking_downpayment)
                             ELSE b.booking_downpayment
                         END AS downpayment,
-                        CASE 
-                            WHEN latest_billing.billing_id IS NOT NULL THEN
-                                COALESCE(latest_billing.billing_vat, 0)
-                            ELSE 0
-                        END AS vat,
+                        
                         -- Additional info
                         latest_billing.billing_id,
                         latest_invoice.invoice_id,
@@ -861,8 +857,10 @@ class Admin_Functions
             $checkin_time = '14:00:00'; // 2:00 PM
             $checkout_time = '12:00:00'; // 12:00 PM
             $stmt = $conn->prepare("INSERT INTO tbl_booking
-                (customers_id, customers_walk_in_id, guests_amnt, booking_totalAmount, booking_downpayment, reference_no, booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_isArchive)
-                VALUES (:customers_id, :walkin_id, :guests, :total_amount, :downpayment, :ref_no, CONCAT(:checkin, ' ', :checkin_time), CONCAT(:checkout, ' ', :checkout_time), NOW(), 0)");
+                (customers_id, customers_walk_in_id, guests_amnt, booking_totalAmount, booking_downpayment, reference_no, booking_checkin_dateandtime, 
+                booking_checkout_dateandtime, booking_created_at, booking_isArchive)
+                VALUES (:customers_id, :walkin_id, :guests, :total_amount, :downpayment, :ref_no, CONCAT(:checkin, ' ', :checkin_time), 
+                CONCAT(:checkout, ' ', :checkout_time), NOW(), 0)");
             $stmt->execute([
                 ':customers_id' => $customerId,
                 ':walkin_id' => $walkInId,
@@ -1267,8 +1265,10 @@ class Admin_Functions
                 // Payment details
                 $totalAmount = $info['billing_total_amount'] ?? $info['booking_totalAmount'] ?? 0;
                 $downpayment = $info['billing_downpayment'] ?? $info['booking_downpayment'] ?? 0;
-                $vat = $info['billing_vat'] ?? 0;
-                $balance = $info['billing_balance'] ?? 0;
+                // Compute balance fallback when no billing record is present
+                $balance = isset($info['billing_balance']) && $info['billing_balance'] !== null
+                    ? $info['billing_balance']
+                    : max(0, ($totalAmount ?: 0) - ($downpayment ?: 0));
                 $paymentMethod = $info['payment_method_name'] ?? 'Not specified';
                 $invoiceNumber = $info['billing_invoice_number'] ?? $refNo;
                 $billingDate = $info['billing_dateandtime'] ?? '';
@@ -1327,44 +1327,66 @@ class Admin_Functions
                         $guestInfo .= ', ' . $childrenCount . ' child' . ($childrenCount > 1 ? 'ren' : '');
                     }
 
-                    $emailBody = "<div style=\"font-family:Arial,sans-serif;color:#000;max-width:600px;margin:0 auto;background:#fff;\">"
-                        . "<div style=\"padding:20px;\">"
+                    $emailBody =
+                        "<center>"
+                        . "<style>"
+                        . "@media only screen and (max-width:480px){"
+                        . ".sm-p{padding:16px!important;} .sm-text{font-size:14px!important;} .sm-stack{display:block!important;width:100%!important;}"
+                        . "}"
+                        . "</style>"
+                        . "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"background:#f3f4f6;padding:20px 0;\">"
+                        . "<tr><td align=\"center\">"
+                        . "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-family:Arial,sans-serif;\">"
+                        . "<tr><td style=\"padding:0;\">"
+                        . "<div style=\"background:#111827;color:#ffffff;padding:16px 20px;font-size:18px;font-weight:bold;\">Demiren Hotel • Booking Confirmation" . (!empty($refNo) ? " — " . htmlspecialchars($refNo) : "") . "</div>"
+                        . "</td></tr>"
+                        . "<tr><td class=\"sm-p\" style=\"padding:24px;color:#111827;\">"
+                        . "<p style=\"margin:0 0 12px;font-size:16px;\">Dear " . htmlspecialchars($customerName) . ",</p>"
+                        . "<p class=\"sm-text\" style=\"margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151;\">Thank you for booking your stay with us. We're excited to host you. Below is a summary of your reservation.</p>"
 
-                        // Greeting
-                        . "<p style=\"margin:0 0 16px;font-size:16px;\">Dear " . htmlspecialchars($customerName) . ",</p>"
-                        . "<p style=\"margin:0 0 20px;font-size:16px;line-height:1.5;\">Thank you for booking your stay with us. We are looking forward to your visit.</p>"
+                        . (!empty($assignedRooms) ? "<p class=\"sm-text\" style=\"margin:0 0 12px;font-size:15px;line-height:1.6;color:#374151;\">We are pleased to confirm that your selected room(s) <strong>" . htmlspecialchars($roomsText) . "</strong> have been successfully reserved.</p>" : "")
 
-                        // Booking Details Section
-                        . "<p style=\"margin:0 0 12px;font-size:16px;\">Your booking details are as follows:</p>"
-                        . (!empty($assignedRooms) ? "<p style=\"margin:0 0 16px;font-size:16px;line-height:1.5;\">We are pleased to confirm that your selected room(s) <strong>" . htmlspecialchars($roomsText) . "</strong> have been successfully reserved.</p>" : "")
-                        . "<div style=\"background:#f9f9f9;border:1px solid #ddd;border-radius:8px;padding:20px;margin:20px 0;\">"
-
-                        // Two-column layout for booking details
-                        . "<table style=\"width:100%;border-collapse:collapse;\">"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Reference #</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;font-weight:bold;\">" . htmlspecialchars($refNo) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Check in</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;font-weight:bold;\">" . htmlspecialchars($checkIn) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Check out</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;font-weight:bold;\">" . htmlspecialchars($checkOut) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Room Type</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">" . htmlspecialchars($roomTypeInfo) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Room Number(s)</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">" . htmlspecialchars($roomsText) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Breakfast</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">included</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\"># of Guests</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">" . htmlspecialchars($guestInfo) . "</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">Booked by</td><td style=\"padding:8px 0;border-bottom:1px solid #eee;font-size:14px;\">" . htmlspecialchars($customerName) . " (" . htmlspecialchars($customerEmail) . ")</td></tr>"
-                        . "<tr><td style=\"padding:8px 0;font-size:14px;\">Total</td><td style=\"padding:8px 0;font-size:14px;font-weight:bold;\">₱" . number_format($totalAmount, 2) . "</td></tr>"
+                        . "<div style=\"background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0;\">"
+                        . "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Reference #</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">" . htmlspecialchars($refNo) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Check in</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">" . htmlspecialchars($checkIn) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Check out</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">" . htmlspecialchars($checkOut) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Room Type</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($roomTypeInfo) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Room Number(s)</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($roomsText) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\"># of Guests</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($guestInfo) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Booked by</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($customerName) . " (" . htmlspecialchars($customerEmail) . ")</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;font-size:14px;color:#374151;\">Total</td><td class=\"sm-stack\" style=\"padding:8px;font-size:14px;color:#111827;font-weight:bold;\">₱" . number_format($totalAmount, 2) . "</td></tr>"
                         . "</table>"
                         . "</div>"
 
-                        // Closing remarks
-                        . "<p style=\"margin:20px 0 0;font-size:16px;line-height:1.5;\">If you have any questions please don't hesitate to contact us.</p>"
-                        . "<p style=\"margin:16px 0 0;font-size:16px;line-height:1.5;\">We hope you enjoy your stay with us!</p>"
-
-                        // Sign-off
-                        . "<div style=\"margin-top:30px;\">"
-                        . "<p style=\"margin:0 0 4px;font-size:16px;\">Best Regards,</p>"
-                        . "<p style=\"margin:0;font-size:16px;font-weight:bold;\">Demiren Hotel</p>"
+                        . "<h3 style=\"margin:20px 0 8px;font-size:16px;color:#111827;\">Payment and invoice details</h3>"
+                        . "<div style=\"background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:12px 0;\">"
+                        . "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Invoice #</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">" . htmlspecialchars($invoiceNumber) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Payment Method</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($paymentMethod) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Total Amount</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">₱" . number_format($totalAmount, 2) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Downpayment</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">₱" . number_format($downpayment, 2) . "</td></tr>"
+                        
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Balance</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:bold;\">₱" . number_format($balance, 2) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Billing Date</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . htmlspecialchars($paymentDate) . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#374151;\">Invoice Date</td><td class=\"sm-stack\" style=\"padding:8px;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;\">" . (!empty($invoiceDate) ? htmlspecialchars(date('F j, Y', strtotime($invoiceDate))) : '') . "</td></tr>"
+                        . "<tr><td class=\"sm-stack\" style=\"padding:8px;font-size:14px;color:#374151;\">Invoice Time</td><td class=\"sm-stack\" style=\"padding:8px;font-size:14px;color:#111827;\">" . htmlspecialchars($invoiceTime) . "</td></tr>"
+                        . "</table>"
                         . "</div>"
 
+                        . "<p class=\"sm-text\" style=\"margin:16px 0 0;font-size:15px;line-height:1.6;color:#374151;\">If you have any questions, please reply to this email or contact our front desk.</p>"
+                        . "<p class=\"sm-text\" style=\"margin:4px 0 0;font-size:15px;line-height:1.6;color:#374151;\">We hope you enjoy your stay with us!</p>"
+
+                        . "<div style=\"margin-top:24px;color:#111827;\">"
+                        . "<p style=\"margin:0 0 4px;font-size:15px;\">Best Regards,</p>"
+                        . "<p style=\"margin:0;font-size:15px;font-weight:bold;\">Demiren Hotel</p>"
                         . "</div>"
-                        . "</div>";
+
+                        . "</td></tr>"
+                        . "</table>"
+                        . "</td></tr>"
+                        . "</table>"
+                        . "</center>";
 
                     $mailer = new SendEmail();
                     $email_status = $mailer->sendEmail($customerEmail, $subject, $emailBody) ? 'sent' : 'failed';
@@ -2631,12 +2653,16 @@ class Admin_Functions
                 FROM tbl_booking b
                 LEFT JOIN tbl_customers c ON b.customers_id = c.customers_id
                 LEFT JOIN tbl_customers_walk_in cwi ON b.customers_walk_in_id = cwi.customers_walk_in_id
-                LEFT JOIN tbl_booking_status bs ON (
-                    SELECT status_id FROM tbl_booking_history 
-                    WHERE booking_id = b.booking_id 
-                    ORDER BY booking_history_id DESC 
-                    LIMIT 1
-                ) = bs.booking_status_id
+                INNER JOIN (
+                    SELECT bh.booking_id, bh.status_id
+                    FROM tbl_booking_history bh
+                    INNER JOIN (
+                        SELECT booking_id, MAX(booking_history_id) AS max_history_id
+                        FROM tbl_booking_history 
+                        GROUP BY booking_id
+                    ) latest ON latest.booking_id = bh.booking_id AND latest.max_history_id = bh.booking_history_id
+                ) last_status ON last_status.booking_id = b.booking_id
+                INNER JOIN tbl_booking_status bs ON last_status.status_id = bs.booking_status_id
                 LEFT JOIN tbl_booking_room br ON b.booking_id = br.booking_id
                 LEFT JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
                 WHERE b.booking_isArchive = 0
@@ -2787,6 +2813,7 @@ class Admin_Functions
                     br.roomnumber_id,
                     br.bookingRoom_adult,
                     br.bookingRoom_children,
+                    COALESCE(vl.visitor_count, 0) AS visitor_count,
                     b.reference_no,
                     b.booking_checkin_dateandtime,
                     b.booking_checkout_dateandtime,
@@ -2806,19 +2833,24 @@ class Admin_Functions
                 LEFT JOIN tbl_customers_walk_in cwi ON b.customers_walk_in_id = cwi.customers_walk_in_id
                 LEFT JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
                 LEFT JOIN tbl_rooms r ON br.roomnumber_id = r.roomnumber_id
-                LEFT JOIN tbl_booking_status bs ON (
-                    SELECT status_id FROM tbl_booking_history 
-                    WHERE booking_id = b.booking_id 
-                    ORDER BY booking_history_id DESC 
-                    LIMIT 1
-                ) = bs.booking_status_id
+                LEFT JOIN (
+                    SELECT booking_id, COUNT(*) AS visitor_count
+                    FROM tbl_visitorlogs
+                    WHERE visitorlogs_checkout_time IS NULL
+                    GROUP BY booking_id
+                ) vl ON vl.booking_id = b.booking_id
+                INNER JOIN (
+                    SELECT bh.booking_id, bh.status_id
+                    FROM tbl_booking_history bh
+                    INNER JOIN (
+                        SELECT booking_id, MAX(booking_history_id) AS max_history_id
+                        FROM tbl_booking_history 
+                        GROUP BY booking_id
+                    ) latest ON latest.booking_id = bh.booking_id AND latest.max_history_id = bh.booking_history_id
+                ) last_status ON last_status.booking_id = b.booking_id
+                INNER JOIN tbl_booking_status bs ON last_status.status_id = bs.booking_status_id
                 WHERE b.booking_isArchive = 0
-                AND (
-                    SELECT status_id FROM tbl_booking_history 
-                    WHERE booking_id = b.booking_id 
-                    ORDER BY booking_history_id DESC 
-                    LIMIT 1
-                ) IN (2, 5) -- Approved or Checked-In status
+                AND last_status.status_id = 5
                 ORDER BY b.booking_checkin_dateandtime DESC";
 
         $stmt = $conn->prepare($sql);
@@ -4487,15 +4519,14 @@ class Admin_Functions
                     ) VALUES (
                         :bid, 1, 1, NULL, NOW(), :inv, :down, :vat, :total, :bal
                     )");
-                $vat = round($row['booking_totalAmount'] * 0.12, 2);
                 $down = (float)$row['booking_downpayment'];
-                $total = (float)$row['booking_totalAmount'] + $vat;
+                $total = (float)$row['booking_totalAmount'];
                 $bal = max(0, $total - $down);
                 $insBill->execute([
                     ':bid' => $bid,
                     ':inv' => $invoiceNumber,
                     ':down' => $down,
-                    ':vat' => $vat,
+                    ':vat' => 0,
                     ':total' => $total,
                     ':bal' => $bal
                 ]);
