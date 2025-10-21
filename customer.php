@@ -271,19 +271,6 @@ class Demiren_customer
         include "connection.php";
         include "send_email.php";
         $json = json_decode($json, true);
-
-        $returnValueImage = uploadImage();
-        switch ($returnValueImage) {
-            case 2:
-                return 2; // invalid file type
-            case 3:
-                return 3; // upload error
-            case 4:
-                return 4; // file too big
-            default:
-                break;
-        }
-
         try {
             $conn->beginTransaction();
 
@@ -313,13 +300,13 @@ class Demiren_customer
             $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
-                (customers_id, customers_walk_in_id, guests_amnt, booking_payment, 
+                (customers_id, customers_walk_in_id, guests_amnt, booking_payment,
                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
-                booking_totalAmount, booking_isArchive, reference_no, booking_fileName) 
+                booking_totalAmount, booking_isArchive, reference_no) 
             VALUES 
                 (NULL, :walkin_id, :guestTotal, :downpayment, 
                 :checkin, :checkout, NOW(), 
-                :totalAmount, 0, :reference_no, :file)
+                :totalAmount, 0, :reference_no)
         ");
             $stmt->bindParam(":walkin_id", $walkInCustomerId);
             $stmt->bindParam(":guestTotal", $totalGuests);
@@ -328,7 +315,6 @@ class Demiren_customer
             $stmt->bindParam(":checkout", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":reference_no", $referenceNo);
-            $stmt->bindParam(":file", $returnValueImage);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
