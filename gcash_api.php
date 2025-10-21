@@ -7,6 +7,8 @@ $amount = (int) round(floatval($totalAmount) * 100);
 $name = isset($_POST['name']) ? $_POST['name'] : 'John Doe';
 $email = isset($_POST['email']) ? $_POST['email'] : 'john@example.com';
 $phone = isset($_POST['phone']) ? $_POST['phone'] : '09123456789';
+$hasAccount = isset($_POST['hasAccount']) ? $_POST['hasAccount'] : 0;
+$cancelUrl = $hasAccount == 1 ? "http://localhost:3000/customer" : "http://localhost:3000/customer/roomsearch";
 $client = new \GuzzleHttp\Client();
 
 try {
@@ -14,7 +16,7 @@ try {
     'json' => [
       'data' => [
         'attributes' => [
-          'cancel_url' => 'http://localhost:3000/customer/roomsearch',
+          'cancel_url' => $cancelUrl,
           'success_url' => 'http://localhost:3000/payment-success',
           'billing' => [
             'address' => [
