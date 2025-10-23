@@ -2339,6 +2339,30 @@ class Demiren_customer
         }
         return 1;
     }
+
+    function hasCustomerCheckOuted($json)
+    {
+        include "connection.php";
+        $data = json_decode($json, true);
+        $sql = "
+        SELECT 
+        CASE 
+            WHEN COUNT(*) > 0 THEN 1
+            ELSE 0
+        END AS has_checked_out
+        FROM tbl_booking b
+        JOIN tbl_booking_history bh ON b.booking_id = bh.booking_id
+        JOIN tbl_booking_status bs ON bh.status_id = bs.booking_status_id
+        WHERE b.customers_id = :customerId
+        AND bs.booking_status_name = 'Checked-Out'
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":customerId", $data["customerId"]);
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result["has_checked_out"];
+    }
 } //customer
 
 function recordExists($value, $table, $column)
@@ -2523,6 +2547,9 @@ switch ($operation) {
     // case "getRoomImages":
     //     echo json_encode($demiren_customer->getRoomImages($json));
     //     break;
+    case "hasCustomerCheckOuted":
+        echo json_encode($demiren_customer->hasCustomerCheckOuted($json));
+        break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
         break;

@@ -33,7 +33,7 @@ try {
             [
               'amount' => $amount,
               'currency' => 'PHP',
-              'name' => 'Hotel Booking Downpayment',
+              'name' => 'Hotel Booking Payment',
               'quantity' => 1,
             ],
           ],
