@@ -1,5 +1,5 @@
 <?php
-
+date_default_timezone_set("Asia/Manila");
 include "headers.php";
 
 class Demiren_customer
@@ -785,15 +785,12 @@ class Demiren_customer
     {
         include "connection.php";
         $json = json_decode($json, true);
-        $sql = "INSERT INTO tbl_customersreviews (customers_id, customersreviews, customersreviews_hospitality_rate,	customersreviews_behavior_rate, customersreviews_facilities_rate, customersreviews_cleanliness_rate, customersreviews_foods_rate ) VALUES (:customers_id, :customersreviews, :customersreviews_hospitality_rate, :customersreviews_behavior_rate, :customersreviews_facilities_rate, :customersreviews_cleanliness_rate, :customersreviews_foods_rate)";
+        $sql = "INSERT INTO tbl_customersreviews (customers_id, customersreviews_comment, customersreviews_rating, customersreviews_date) 
+                VALUES (:customers_id, :customersreviews, :rating, NOW())";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":customersreviews", $json["customersreviews"]);
-        $stmt->bindParam(":customersreviews_hospitality_rate", $json["customersreviews_hospitality_rate"]);
-        $stmt->bindParam(":customersreviews_behavior_rate", $json["customersreviews_behavior_rate"]);
-        $stmt->bindParam(":customersreviews_facilities_rate", $json["customersreviews_facilities_rate"]);
-        $stmt->bindParam(":customersreviews_cleanliness_rate", $json["customersreviews_cleanliness_rate"]);
-        $stmt->bindParam(":customersreviews_foods_rate", $json["customersreviews_foods_rate"]);
         $stmt->bindParam(":customers_id", $json["customers_id"]);
+        $stmt->bindParam(":rating", $json["rating"]);
         $stmt->execute();
         return $stmt->rowCount() > 0 ? 1 : 0;
     }
@@ -2345,16 +2342,16 @@ class Demiren_customer
         include "connection.php";
         $data = json_decode($json, true);
         $sql = "
-        SELECT 
-        CASE 
-            WHEN COUNT(*) > 0 THEN 1
-            ELSE 0
-        END AS has_checked_out
-        FROM tbl_booking b
-        JOIN tbl_booking_history bh ON b.booking_id = bh.booking_id
-        JOIN tbl_booking_status bs ON bh.status_id = bs.booking_status_id
-        WHERE b.customers_id = :customerId
-        AND bs.booking_status_name = 'Checked-Out'
+            SELECT 
+            CASE 
+                WHEN COUNT(*) > 0 THEN 1
+                ELSE 0
+            END AS has_checked_out
+            FROM tbl_booking b
+            JOIN tbl_booking_history bh ON b.booking_id = bh.booking_id
+            JOIN tbl_booking_status bs ON bh.status_id = bs.booking_status_id
+            WHERE b.customers_id = :customerId
+            AND bs.booking_status_name = 'Checked-Out'
         ";
 
         $stmt = $conn->prepare($sql);
@@ -2362,6 +2359,17 @@ class Demiren_customer
         $stmt->execute();
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         return $result["has_checked_out"];
+    }
+
+    function getCustomerFeedback($json)
+    {
+        include "connection.php";
+        $data = json_decode($json, true);
+        $sql = "SELECT * FROM tbl_customersreviews WHERE customers_id = :customerId";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(":customerId", $data["customerId"]);
+        $stmt->execute();
+        return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
     }
 } //customer
 
@@ -2549,6 +2557,9 @@ switch ($operation) {
     //     break;
     case "hasCustomerCheckOuted":
         echo json_encode($demiren_customer->hasCustomerCheckOuted($json));
+        break;
+    case "getCustomerFeedback":
+        echo json_encode($demiren_customer->getCustomerFeedback($json));
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
