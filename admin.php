@@ -2457,8 +2457,8 @@ class Admin_Functions
                     END as request_status,
                     '' as request_notes,
                     '' as customer_notes,
-                    NOW() as requested_at,
-                    NOW() as processed_at,
+                    bc.booking_charge_datetime as requested_at,
+                    NULL as processed_at,
                     '' as admin_notes,
                     b.reference_no,
                     CONCAT(COALESCE(c.customers_fname, w.customers_walk_in_fname), ' ', COALESCE(c.customers_lname, w.customers_walk_in_lname)) AS customer_name,
@@ -2622,8 +2622,8 @@ class Admin_Functions
                     SUM(CASE WHEN bc.booking_charge_status = 1 THEN bc.booking_charges_total ELSE 0 END) as pending_amount,
                     SUM(CASE WHEN bc.booking_charge_status = 2 THEN bc.booking_charges_total ELSE 0 END) as approved_amount,
                     SUM(CASE WHEN bc.booking_charge_status = 2 
-                              AND YEAR(NOW()) = YEAR(NOW()) 
-                              AND MONTH(NOW()) = MONTH(NOW()) 
+                              AND YEAR(bc.booking_charge_datetime) = YEAR(NOW()) 
+                              AND MONTH(bc.booking_charge_datetime) = MONTH(NOW()) 
                          THEN bc.booking_charges_total ELSE 0 END) as current_month_approved
                 FROM tbl_booking_charges bc
                 INNER JOIN tbl_booking_room br ON bc.booking_room_id = br.booking_room_id
@@ -2731,14 +2731,16 @@ class Admin_Functions
                             booking_charges_price,
                             booking_charges_quantity,
                             booking_charges_total,
-                            booking_charge_status
+                            booking_charge_status,
+                            booking_charge_datetime
                         ) VALUES (
                             :booking_room_id,
                             :charges_master_id,
                             :booking_charges_price,
                             :booking_charges_quantity,
                             :booking_charges_total,
-                            :booking_charge_status
+                            :booking_charge_status,
+                            NOW()
                         )";
 
                 $stmt = $conn->prepare($sql);
@@ -2834,11 +2836,11 @@ class Admin_Functions
                 LEFT JOIN tbl_roomtype rt ON br.roomtype_id = rt.roomtype_id
                 LEFT JOIN tbl_rooms r ON br.roomnumber_id = r.roomnumber_id
                 LEFT JOIN (
-                    SELECT booking_id, COUNT(*) AS visitor_count
+                    SELECT booking_room_id, COUNT(*) AS visitor_count
                     FROM tbl_visitorlogs
                     WHERE visitorlogs_checkout_time IS NULL
-                    GROUP BY booking_id
-                ) vl ON vl.booking_id = b.booking_id
+                    GROUP BY booking_room_id
+                ) vl ON vl.booking_room_id = br.booking_room_id
                 INNER JOIN (
                     SELECT bh.booking_id, bh.status_id
                     FROM tbl_booking_history bh
@@ -2851,6 +2853,43 @@ class Admin_Functions
                 INNER JOIN tbl_booking_status bs ON last_status.status_id = bs.booking_status_id
                 WHERE b.booking_isArchive = 0
                 AND last_status.status_id = 5
+                ORDER BY b.booking_checkin_dateandtime DESC";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    function getTblBookingRoom()
+    {
+        include "connection.php";
+
+        $sql = "SELECT 
+                    br.booking_room_id,
+                    br.booking_id,
+                    br.roomtype_id,
+                    br.roomnumber_id,
+                    br.bookingRoom_adult,
+                    br.bookingRoom_children,
+                    b.reference_no,
+                    b.booking_checkin_dateandtime,
+                    b.booking_checkout_dateandtime,
+                    COALESCE(CONCAT(c.customers_fname, ' ', c.customers_lname), 
+                             CONCAT(cwi.customers_walk_in_fname, ' ', cwi.customers_walk_in_lname)) as customer_name,
+                    COALESCE(c.customers_email, cwi.customers_walk_in_email) as customers_email,
+                    COALESCE(c.customers_phone, cwi.customers_walk_in_phone) as customers_phone,
+                    COALESCE(c.customers_address, cwi.customers_walk_in_address) as customers_address,
+                    rt.roomtype_name,
+                    rt.roomtype_price,
+                    rt.max_capacity,
+                    r.roomfloor
+                FROM tbl_booking_room br
+                INNER JOIN tbl_booking b ON br.booking_id = b.booking_id
+                LEFT JOIN tbl_customers c ON b.customers_id = c.customers_id
+                LEFT JOIN tbl_customers_walk_in cwi ON b.customers_walk_in_id = cwi.customers_walk_in_id
+                LEFT JOIN tbl_rooms r ON br.roomnumber_id = r.roomnumber_id
+                LEFT JOIN tbl_roomtype rt ON COALESCE(br.roomtype_id, r.roomtype_id) = rt.roomtype_id
+                WHERE b.booking_isArchive = 0
                 ORDER BY b.booking_checkin_dateandtime DESC";
 
         $stmt = $conn->prepare($sql);
@@ -4540,6 +4579,68 @@ class Admin_Functions
         }
     }
 
+    // Automatically mark bookings as No-Show when latest status is Confirmed and check-in is today
+    function autoMarkNoShowForConfirmedBookings()
+    {
+        include 'connection.php';
+        $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        try {
+            $conn->beginTransaction();
+
+            // Find bookings where latest status is Confirmed and check-in date is today
+            $sqlConfirmedToday = "SELECT b.booking_id
+                                   FROM tbl_booking b
+                                   INNER JOIN (
+                                       SELECT bh1.booking_id, bs.booking_status_name
+                                       FROM tbl_booking_history bh1
+                                       INNER JOIN (
+                                           SELECT booking_id, MAX(booking_history_id) AS latest_history_id
+                                           FROM tbl_booking_history
+                                           GROUP BY booking_id
+                                       ) last ON last.booking_id = bh1.booking_id AND last.latest_history_id = bh1.booking_history_id
+                                       INNER JOIN tbl_booking_status bs ON bh1.status_id = bs.booking_status_id
+                                   ) st ON st.booking_id = b.booking_id
+                                   WHERE st.booking_status_name = 'Confirmed'
+                                     AND DATE(b.booking_checkin_dateandtime) = CURDATE()";
+            $stmt = $conn->prepare($sqlConfirmedToday);
+            $stmt->execute();
+            $toMark = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $markedCount = 0;
+            foreach ($toMark as $bid) {
+                // Insert booking history No-Show (status_id = 4)
+                $ins = $conn->prepare("INSERT INTO tbl_booking_history (booking_id, status_id, updated_at, employee_id)
+                                        VALUES (:bid, 4, NOW(), 1)");
+                $ins->execute([':bid' => $bid]);
+
+                // Set associated rooms back to Vacant (3)
+                $rooms = $conn->prepare("SELECT roomnumber_id FROM tbl_booking_room WHERE booking_id = :bid");
+                $rooms->execute([':bid' => $bid]);
+                $roomIds = $rooms->fetchAll(PDO::FETCH_COLUMN);
+                if (!empty($roomIds)) {
+                    $inList = implode(',', array_map('intval', $roomIds));
+                    $upd = $conn->prepare("UPDATE tbl_rooms SET room_status_id = 3 WHERE roomnumber_id IN ($inList)");
+                    $upd->execute();
+                }
+
+                $markedCount++;
+            }
+
+            $conn->commit();
+            return json_encode([
+                'success' => true,
+                'marked_count' => $markedCount
+            ]);
+        } catch (Exception $e) {
+            $conn->rollBack();
+            return json_encode([
+                'success' => false,
+                'error' => 'Database error: ' . $e->getMessage()
+            ]);
+        }
+    }
+
         // Check if booking has a complete invoice
     function checkInvoiceStatus($data)
     {
@@ -4749,7 +4850,7 @@ class Admin_Functions
             $sql = "SELECT 
                         visitorlogs_id,
                         visitorapproval_id,
-                        booking_id,
+                        booking_room_id,
                         employee_id,
                         visitorlogs_visitorname,
                         visitorlogs_purpose,
@@ -4774,7 +4875,7 @@ class Admin_Functions
         include "connection.php";
         try {
             $visitorapproval_id = $_POST['visitorapproval_id'] ?? null;
-            $booking_id = $_POST['booking_id'] ?? null;
+            $booking_room_id = $_POST['booking_room_id'] ?? null;
             $employee_id = $_POST['employee_id'] ?? null;
             $visitorname = $_POST['visitorlogs_visitorname'] ?? '';
             $purpose = $_POST['visitorlogs_purpose'] ?? '';
@@ -4791,16 +4892,16 @@ class Admin_Functions
             $checkout = null;
 
             $sql = "INSERT INTO tbl_visitorlogs (
-                        visitorapproval_id, booking_id, employee_id,
+                        visitorapproval_id, booking_room_id, employee_id,
                         visitorlogs_visitorname, visitorlogs_purpose,
                         visitorlogs_checkin_time, visitorlogs_checkout_time
                     ) VALUES (
-                        :visitorapproval_id, :booking_id, :employee_id,
+                        :visitorapproval_id, :booking_room_id, :employee_id,
                         :visitorname, :purpose, :checkin, :checkout
                     )";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(':visitorapproval_id', $visitorapproval_id);
-            $stmt->bindParam(':booking_id', $booking_id);
+            $stmt->bindParam(':booking_room_id', $booking_room_id);
             $stmt->bindParam(':employee_id', $employee_id);
             $stmt->bindParam(':visitorname', $visitorname);
             $stmt->bindParam(':purpose', $purpose);
@@ -4827,7 +4928,7 @@ class Admin_Functions
             }
 
             // Fetch current visitor log to determine if checkout is being set for the first time
-            $curStmt = $conn->prepare("SELECT booking_id, visitorlogs_checkin_time, visitorlogs_checkout_time FROM tbl_visitorlogs WHERE visitorlogs_id = :id");
+            $curStmt = $conn->prepare("SELECT booking_room_id, visitorlogs_checkin_time, visitorlogs_checkout_time FROM tbl_visitorlogs WHERE visitorlogs_id = :id");
             $curStmt->bindParam(':id', $id);
             $curStmt->execute();
             $current = $curStmt->fetch(PDO::FETCH_ASSOC);
@@ -4840,7 +4941,7 @@ class Admin_Functions
 
             $map = [
                 'visitorapproval_id' => 'visitorapproval_id',
-                'booking_id' => 'booking_id',
+                'booking_room_id' => 'booking_room_id',
                 'employee_id' => 'employee_id',
                 'visitorlogs_visitorname' => 'visitorlogs_visitorname',
                 'visitorlogs_purpose' => 'visitorlogs_purpose',
@@ -4868,8 +4969,8 @@ class Admin_Functions
             $stmt->bindValue(':id', $id);
             $ok = $stmt->execute();
 
-            // After successful update, if checkout was newly set and booking exists, create a visitor stay charge
-            if ($ok === true && $shouldProcessCharge && !empty($current['booking_id'])) {
+            // After successful update, if checkout was newly set and a booking room is linked, create a visitor stay charge
+            if ($ok === true && $shouldProcessCharge && !empty($current['booking_room_id'])) {
                 $checkin = $current['visitorlogs_checkin_time'] ?? null;
                 $checkout = $checkoutPosted;
 
@@ -4886,11 +4987,8 @@ class Admin_Functions
                         $quantity = $durationHours / $blockHours; // can be fractional
                         $total = $rate * $quantity;
 
-                        // Find a booking_room_id for the associated booking
-                        $roomStmt = $conn->prepare("SELECT booking_room_id FROM tbl_booking_room WHERE booking_id = :booking_id LIMIT 1");
-                        $roomStmt->bindParam(':booking_id', $current['booking_id']);
-                        $roomStmt->execute();
-                        $booking_room_id = $roomStmt->fetchColumn();
+                        // Use existing booking_room_id from the visitor log
+                        $booking_room_id = $current['booking_room_id'];
 
                         if ($booking_room_id) {
                             // Ensure charges_master entry exists for 'Visitor Stay Charge'
@@ -5004,6 +5102,10 @@ switch ($methodType) {
 
     case "autoCheckoutAndSeedBillings":
         echo $AdminClass->autoCheckoutAndSeedBillings();
+        break;
+
+    case "autoMarkNoShowForConfirmedBookings":
+        echo $AdminClass->autoMarkNoShowForConfirmedBookings();
         break;
 
     case "getMostBookedRooms":
@@ -5263,6 +5365,10 @@ switch ($methodType) {
 
     case "get_booking_rooms":
         echo json_encode($AdminClass->getBookingRooms());
+        break;
+
+    case "get_tbl_booking_room":
+        echo json_encode($AdminClass->getTblBookingRoom());
         break;
 
     case "get_booking_rooms_by_booking":

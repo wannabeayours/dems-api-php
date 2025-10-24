@@ -273,7 +273,6 @@ class Demiren_customer
         $json = json_decode($json, true);
         try {
             $conn->beginTransaction();
-
             // ✅ Step 1: Insert walk-in customer
             $stmt = $conn->prepare("
             INSERT INTO tbl_customers_walk_in 
@@ -292,7 +291,7 @@ class Demiren_customer
             $bookingDetails = $json["bookingDetails"];
             $roomDetails = $json["roomDetails"];
             $totalGuests = $bookingDetails["adult"] + $bookingDetails["children"];
-
+            $paymentMethod = $bookingDetails["payment_method_id"];
             $checkIn = $bookingDetails["checkIn"];
             $checkOut = $bookingDetails["checkOut"];
 
@@ -302,11 +301,11 @@ class Demiren_customer
             INSERT INTO tbl_booking 
                 (customers_id, customers_walk_in_id, guests_amnt, booking_payment,
                 booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
-                booking_totalAmount, booking_isArchive, reference_no) 
+                booking_totalAmount, booking_isArchive, reference_no, booking_paymentMethod) 
             VALUES 
                 (NULL, :walkin_id, :guestTotal, :downpayment, 
                 :checkin, :checkout, NOW(), 
-                :totalAmount, 0, :reference_no)
+                :totalAmount, 0, :reference_no, :payment_method_id)
         ");
             $stmt->bindParam(":walkin_id", $walkInCustomerId);
             $stmt->bindParam(":guestTotal", $totalGuests);
@@ -315,6 +314,7 @@ class Demiren_customer
             $stmt->bindParam(":checkout", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":reference_no", $referenceNo);
+            $stmt->bindParam(":payment_method_id", $paymentMethod);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
@@ -387,7 +387,7 @@ class Demiren_customer
             $sql = "INSERT INTO tbl_booking_history
             (booking_id, employee_id, status_id, updated_at) 
             VALUES 
-            (:booking_id, NULL, 1, NOW())";
+            (:booking_id, NULL, 2, NOW())";
             $stmt = $conn->prepare($sql);
             $stmt->bindParam(":booking_id", $bookingId);
             $stmt->execute();
@@ -413,119 +413,49 @@ class Demiren_customer
             $stmt->execute();
 
             $conn->commit();
-            $emailSubject = 'Demirens Booking';
+            $emailSubject = 'Demiren Hotel — Booking Request Details';
+
+            // Prepare dynamic values for summary
+            $paymentMethodName = ($bookingDetails["payment_method_id"] == 1) ? "GCash" : "Paypal";
+            $checkInFmt = date('F j, Y', strtotime($bookingDetails["checkIn"])) . ' 2:00 PM';
+            $checkOutFmt = date('F j, Y', strtotime($bookingDetails["checkOut"])) . ' 12:00 PM';
+            $nights = max(1, (int)ceil((strtotime($bookingDetails["checkOut"]) - strtotime($bookingDetails["checkIn"])) / 86400));
+            $guestsTotal = (int)$bookingDetails["adult"] + (int)$bookingDetails["children"];
+            $totalAmountFmt = number_format((float)$bookingDetails["totalAmount"], 2);
+
+
+            // Build room list HTML with names
+            $roomsListHtml = '';
+            foreach ($roomDetails as $room) {
+                $stmtRt = $conn->prepare("SELECT roomtype_name FROM tbl_roomtype WHERE roomtype_id = :id");
+                $stmtRt->bindParam(':id', $room["roomTypeId"]);
+                $stmtRt->execute();
+                $rtName = $stmtRt->fetchColumn();
+                if (!$rtName) {
+                    $rtName = 'Room Type #' . (int)$room["roomTypeId"];
+                }
+                $roomsListHtml .= '<li><strong>' . htmlspecialchars($rtName) . '</strong> — Adults: ' . (int)$room["adultCount"] . ', Children: ' . (int)$room["childrenCount"] . ', Extra beds: ' . (int)$room["bedCount"] . '</li>';
+            }
+
             $emailBody = '
                     <html>
                     <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
-                        /* Base styles */
-                        body {
-                            margin: 0;
-                            padding: 0;
-                            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                            background-color: #f4f6f8;
-                            color: #333;
-                        }
-
-                        .email-wrapper {
-                            width: 100%;
-                            background-color: #f4f6f8;
-                            padding: 40px 0;
-                        }
-
-                        .email-container {
-                            max-width: 600px;
-                            margin: 0 auto;
-                            background-color: #ffffff;
-                            border-radius: 12px;
-                            overflow: hidden;
-                            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
-                            border: 1px solid #e6ebf1;
-                        }
-
-                        /* Header */
-                        .email-header {
-                            background: linear-gradient(135deg, #1a73e8, #4285f4);
-                            color: white;
-                            text-align: center;
-                            padding: 25px 20px;
-                        }
-
-                        .email-header h1 {
-                            margin: 0;
-                            font-size: 22px;
-                            font-weight: 600;
-                            letter-spacing: 0.3px;
-                        }
-
-                        /* Body content */
-                        .email-body {
-                            padding: 35px 40px;
-                        }
-
-                        .email-body h2 {
-                            font-size: 20px;
-                            font-weight: 600;
-                            color: #1a73e8;
-                            margin-top: 0;
-                            margin-bottom: 15px;
-                        }
-
-                        .email-body p {
-                            font-size: 15px;
-                            line-height: 1.7;
-                            color: #444;
-                            margin: 10px 0;
-                        }
-
-                        .email-highlight {
-                            background-color: #f1f6ff;
-                            border-left: 4px solid #1a73e8;
-                            padding: 12px 16px;
-                            margin: 25px 0;
-                            border-radius: 6px;
-                            color: #1a1a1a;
-                            font-size: 14px;
-                            line-height: 1.6;
-                        }
-
-                        /* Button */
-                        .email-button {
-                            display: inline-block;
-                            background-color: #1a73e8;
-                            color: #ffffff;
-                            padding: 12px 28px;
-                            border-radius: 6px;
-                            font-size: 15px;
-                            text-decoration: none;
-                            font-weight: 500;
-                            margin-top: 20px;
-                        }
-
-                        .email-button:hover {
-                            background-color: #1669c1;
-                        }
-
-                        /* Footer */
-                        .email-footer {
-                            font-size: 12px;
-                            color: #777;
-                            text-align: center;
-                            border-top: 1px solid #eaeaea;
-                            padding: 20px 10px;
-                            background-color: #fafafa;
-                        }
-
-                        /* Mobile responsive */
-                        @media only screen and (max-width: 600px) {
-                            .email-body {
-                                padding: 25px 20px;
-                            }
-                            .email-header h1 {
-                                font-size: 20px;
-                            }
-                        }
+                        body { margin: 0; padding: 0; font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f8; color: #333; }
+                        .email-wrapper { width: 100%; background-color: #f4f6f8; padding: 40px 0; }
+                        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); border: 1px solid #e6ebf1; }
+                        .email-header { background: linear-gradient(135deg, #1a73e8, #4285f4); color: white; text-align: center; padding: 25px 20px; }
+                        .email-header h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.3px; }
+                        .email-body { padding: 35px 40px; }
+                        .email-body h2 { font-size: 20px; font-weight: 600; color: #1a73e8; margin-top: 0; margin-bottom: 15px; }
+                        .email-body p { font-size: 15px; line-height: 1.7; color: #444; margin: 10px 0; }
+                        .summary-card { background-color: #f8fbff; border: 1px solid #e6ebf1; border-radius: 8px; padding: 16px; margin: 18px 0; }
+                        .summary-item { display: flex; justify-content: space-between; margin: 6px 0; font-size: 14px; }
+                        .summary-item .label { color: #555; }
+                        .rooms-list { margin: 10px 0 0; padding-left: 18px; }
+                        .email-footer { font-size: 12px; color: #777; text-align: center; border-top: 1px solid #eaeaea; padding: 20px 10px; background-color: #fafafa; }
+                        @media only screen and (max-width: 600px) { .email-body { padding: 25px 20px; } .email-header h1 { font-size: 20px; } }
                     </style>
                     </head>
                     <body>
@@ -534,41 +464,34 @@ class Demiren_customer
                                 <div class="email-header">
                                     <h1>Demiren Hotel & Restaurant</h1>
                                 </div>
-
                                 <div class="email-body">
-                                    <h2>Your Booking Request Has Been Received!</h2>
-
+                                    <h2>Booking Request Received — Summary</h2>
                                     <p>Hi there,</p>
-                                    <p>Thank you for choosing <strong>Demiren Hotel & Restaurant</strong>. We’re delighted that you’re planning to stay with us!</p>
+                                    <p>We’ve received your booking request. Below are the full details for your records:</p>
 
-                                    <div class="email-highlight">
-                                        <strong>Your booking request is currently under review.</strong><br>
-                                        Once it’s approved by our front desk team, you’ll receive a confirmation email with all the details of your stay.
-                                        You may cancel it within 24 hours Just contact us at <a href="mailto:demirenhotel@gmail.com" style="color:#1a73e8; text-decoration:none;">info@demirenhotel.com</a>.
+                                    <div class="summary-card">
+                                        <div class="summary-item"><span class="label">Check-in:</span><span>' . $checkInFmt . '</span></div>
+                                        <div class="summary-item"><span class="label">Check-out:</span><span>' . $checkOutFmt . '</span></div>
+                                        <div class="summary-item"><span class="label">Nights:</span><span>' . $nights . '</span></div>
+                                        <div class="summary-item"><span class="label">Guests:</span><span>' . $guestsTotal . ' (Adults: ' . (int)$bookingDetails["adult"] . ', Children: ' . (int)$bookingDetails["children"] . ')</span></div>
+                                        <div class="summary-item"><span class="label">Payment Method:</span><span>' . $paymentMethodName . '</span></div>
+                                        <div class="summary-item"><span class="label">Total Amount:</span><span>₱' . $totalAmountFmt . '</span></div>
+                                        <div class="summary-item"><span class="label">Rooms:</span><span></span></div>
+                                        <ul class="rooms-list">' . $roomsListHtml . '</ul>
                                     </div>
 
-                                    <p>If you have any questions in the meantime, feel free to contact us at <a href="mailto:demirenhotel@gmail.com" style="color:#1a73e8; text-decoration:none;">info@demirenhotel.com</a>.</p>
-                                    <p>We look forward to welcoming you soon!</p>
+                                    <p class="email-highlight">Your booking request is currently under review by our front desk team. You’ll receive a confirmation message once approved. If needed, you can cancel within 24 hours. For assistance, contact <a href="mailto:info@demirenhotel.com" style="color:#1a73e8; text-decoration:none;">info@demirenhotel.com</a>.</p>
 
-                                    <p>Warm regards,<br>
-                                    <strong>The Demiren Team</strong></p>
-
-                                    
+                                    <p>Warm regards,<br><strong>The Demiren Team</strong></p>
                                 </div>
-
-                                <div class="email-footer">
-                                    This is an automated message from Demiren Hotel & Restaurant.<br>
-                                    Please do not reply directly to this email.
-                                </div>
+                                <div class="email-footer">This is an automated message from Demiren Hotel & Restaurant.<br>Please do not reply directly to this email.</div>
                             </div>
                         </div>
                     </body>
                     </html>';
 
-
-
-
             $sendEmail = new SendEmail();
+
             $sendEmail->sendEmail($json["email"], $emailSubject, $emailBody);
             return 1;
         } catch (PDOException $e) {
@@ -647,18 +570,15 @@ class Demiren_customer
         $json = json_decode($json, true);
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
 
-        $sql = "SELECT a.*, b.*, c.*, d.*
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.payment_method_name
                     FROM tbl_booking a
                     LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
                     LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
                     LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
-                    WHERE 
-                        (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
-                        AND a.booking_id NOT IN (
-                            SELECT booking_id 
-                            FROM tbl_booking_history 
-                            WHERE booking_id = a.booking_id
-                        )
+                    LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
+                    INNER JOIN tbl_payment_method f ON f.payment_method_id = a.booking_paymentMethod
+                    WHERE (a.customers_id = :bookingCustomerId OR a.customers_walk_in_id = :bookingCustomerId)
+                    AND e.status_id = 2
                     ORDER BY a.booking_created_at DESC
                 ";
 
@@ -679,6 +599,7 @@ class Demiren_customer
                 $balance = $this->getCurrentBalance($bookingId);
                 $bookings[$bookingId] = [
                     "booking_id" => $row['booking_id'],
+                    "payment_method_name" => $row['payment_method_name'],
                     "balance" => $balance,
                     "booking_totalAmount" => $row['booking_totalAmount'],
                     "customers_id" => $row['customers_id'],
@@ -824,8 +745,9 @@ class Demiren_customer
         }
 
         // 🔹 Insert cancellation record
-        $sql = "INSERT INTO tbl_booking_history (booking_id, status_id, updated_at) 
-            VALUES (:booking_id, 3, NOW())"; // 3 = Cancelled (based on your tbl_booking_status)
+        $sql = "UPDATE tbl_booking_history 
+                SET status_id = 3, updated_at = NOW() 
+                WHERE booking_id = :booking_id";
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(":booking_id", $json["booking_id"]);
         $stmt->execute();
@@ -1202,21 +1124,25 @@ class Demiren_customer
             $totalGuests = $bookingDetails["adult"] + $bookingDetails["children"];
             $checkIn = $bookingDetails["checkIn"];
             $checkOut = $bookingDetails["checkOut"];
-
+            $paymentMethod = $bookingDetails["payment_method_id"];
+            $referenceNo = "REF" . date("YmdHis") . rand(100, 999);
             // ✅ First, create the booking master row
             $stmt = $conn->prepare("
             INSERT INTO tbl_booking 
                 (customers_id, guests_amnt, customers_walk_in_id, booking_payment, 
-                booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, booking_totalAmount) 
+                booking_checkin_dateandtime, booking_checkout_dateandtime, booking_created_at, 
+                booking_totalAmount, booking_paymentMethod, reference_no) 
             VALUES 
                 (:customers_id, :guestTotalAmount, NULL, :booking_downpayment, 
-                :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount)");
+                :booking_checkin_dateandtime, :booking_checkout_dateandtime, NOW(), :totalAmount, :paymentMethod, :reference_no)");
             $stmt->bindParam(":customers_id", $customerId);
             $stmt->bindParam(":booking_downpayment", $bookingDetails["downpayment"]);
             $stmt->bindParam(":booking_checkin_dateandtime", $checkIn);
             $stmt->bindParam(":booking_checkout_dateandtime", $checkOut);
             $stmt->bindParam(":totalAmount", $bookingDetails["totalAmount"]);
             $stmt->bindParam(":guestTotalAmount", $totalGuests);
+            $stmt->bindParam(":paymentMethod", $paymentMethod);
+            $stmt->bindParam(":reference_no", $referenceNo);
             $stmt->execute();
             $bookingId = $conn->lastInsertId();
 
@@ -1269,6 +1195,7 @@ class Demiren_customer
                 $stmt->bindParam(":bookingRoom_children", $room["childrenCount"]);
                 $stmt->execute();
                 $bookingRoomId = $conn->lastInsertId();
+
                 if ($room["bedCount"] > 0) {
                     $totalCharges = $room["bedCount"] * 400;
                     $sql = "INSERT INTO tbl_booking_charges(charges_master_id, booking_room_id, booking_charges_price, booking_charges_quantity, booking_charges_total, booking_charge_status)
@@ -1280,6 +1207,15 @@ class Demiren_customer
                     $stmt->execute();
                 }
             }
+
+            $sql = "INSERT INTO tbl_booking_history
+            (booking_id, employee_id, status_id, updated_at) 
+            VALUES 
+            (:booking_id, NULL, 2, NOW())";
+            $stmt = $conn->prepare($sql);
+            $stmt->bindParam(":booking_id", $bookingId);
+            $stmt->execute();
+
             if ($bookingDetails["payment_method_id"] == 1) {
                 $balance = $bookingDetails["totalAmount"] - $bookingDetails["totalPay"];
             } else {
@@ -1410,7 +1346,7 @@ class Demiren_customer
         $json = json_decode($json, true);
 
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
-        $sql = "SELECT a.*, b.*, c.*, d.*, 
+        $sql = "SELECT a.*, b.*, c.*, d.*, g.payment_method_name,
             IFNULL(f.booking_status_name, 'Pending') AS booking_status_name
             FROM tbl_booking a
             LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
@@ -1418,6 +1354,8 @@ class Demiren_customer
             LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
             LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
             INNER JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            INNER JOIN tbl_payment_method g ON g.payment_method_id = a.booking_paymentMethod
+
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 0
             ORDER BY a.booking_id DESC";
@@ -1441,6 +1379,7 @@ class Demiren_customer
             if (!isset($grouped[$bookingId])) {
                 $grouped[$bookingId] = [
                     "booking_id" => $row["booking_id"],
+                    "payment_method_name" => $row["payment_method_name"],
                     "booking_checkin_dateandtime" => $row["booking_checkin_dateandtime"],
                     "booking_checkout_dateandtime" => $row["booking_checkout_dateandtime"],
                     "customers_id" => $row["customers_id"],
@@ -1489,13 +1428,14 @@ class Demiren_customer
         $json = json_decode($json, true);
 
         $bookingCustomerId = $json['booking_customer_id'] ?? 0;
-        $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name
+        $sql = "SELECT a.*, b.*, c.*, d.*, f.booking_status_name, g.payment_method_name
             FROM tbl_booking a
             LEFT JOIN tbl_booking_room b ON b.booking_id = a.booking_id
             LEFT JOIN tbl_roomtype c ON c.roomtype_id = b.roomtype_id
             LEFT JOIN tbl_rooms d ON d.roomnumber_id = b.roomnumber_id
             LEFT JOIN tbl_booking_history e ON e.booking_id = a.booking_id
             LEFT JOIN tbl_booking_status f ON f.booking_status_id = e.status_id
+            INNER JOIN tbl_payment_method g ON g.payment_method_id = a.booking_paymentMethod
             WHERE a.customers_id = :bookingCustomerId
             AND a.booking_isArchive = 1
             ORDER BY a.booking_created_at DESC";
@@ -1519,6 +1459,7 @@ class Demiren_customer
             if (!isset($grouped[$bookingId])) {
                 $grouped[$bookingId] = [
                     "booking_id" => $row["booking_id"],
+                    "payment_method_name" => $row["payment_method_name"],
                     "booking_checkin_dateandtime" => $row["booking_checkin_dateandtime"],
                     "booking_checkout_dateandtime" => $row["booking_checkout_dateandtime"],
                     "customers_id" => $row["customers_id"],
