@@ -2281,6 +2281,15 @@ class Demiren_customer
         $stmt->execute();
         return $stmt->rowCount() > 0 ? $stmt->fetch(PDO::FETCH_ASSOC) : 0;
     }
+
+    function getBedPrice()
+    {
+        include "connection.php";
+        $sql = "SELECT charges_master_price FROM tbl_charges_master WHERE charges_master_id = 2";
+        $stmt = $conn->prepare($sql);
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC)["charges_master_price"];
+    }
 } //customer
 
 function recordExists($value, $table, $column)
@@ -2470,6 +2479,9 @@ switch ($operation) {
         break;
     case "getCustomerFeedback":
         echo json_encode($demiren_customer->getCustomerFeedback($json));
+        break;
+    case "getBedPrice":
+        echo json_encode($demiren_customer->getBedPrice());
         break;
     default:
         echo json_encode(["error" => "Invalid operation"]);
